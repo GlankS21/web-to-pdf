@@ -5,7 +5,6 @@ import {connectDB} from './libs/db.js';
 import authRouter from './routes/authRoute.js';
 import userRouter from './routes/userRoute.js';
 import convertRouter from './routes/convertRoute.js';
-import { specs, swaggerUi } from './libs/swagger.js';
 import cookieParser from 'cookie-parser';
 import {protectedRoute} from './middlewares/authMiddleware.js';
 
@@ -19,21 +18,9 @@ app.use(cors({origin: process.env.CLIENT_URL, credentials: true}));
 app.use(express.json());
 app.use(cookieParser());
 
-app.get('/', (req, res) => {
-  res.json({ message: 'PDF Converter API is running' });
-});
-
-// Swagger Documentation
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(specs, {
-  explorer: true,
-  customCss: '.swagger-ui .topbar { display: none }',
-  customSiteTitle: "PDF Converter API Docs"
-}));
-
 // public routes
 app.use('/api/convert', convertRouter);
 app.use('/api/auth', authRouter);
-
 
 // private routes
 app.use(protectedRoute);

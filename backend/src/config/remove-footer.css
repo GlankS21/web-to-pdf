@@ -1,0 +1,22 @@
+footer, .footer {
+  display: none;
+  visibility: hidden !important;
+  height: 0 !important;
+}
+
+.pageLayout__footer {
+  visibility: hidden !important;
+  height: 0 !important;
+}
+
+[class*="footer"] {
+  visibility: hidden !important;
+  height: 0 !important;
+}
+
+@media print {
+  footer, .footer, .pageLayout__footer, [class*="footer"] {
+    visibility: hidden !important;
+    height: 0 !important;
+  }
+}

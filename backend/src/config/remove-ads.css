@@ -1,0 +1,10 @@
+/* src/config/css-presets/remove-ads.css */
+[class*="ad"],
+[id*="ad"],
+.advertisement,
+.banner,
+[class*="promo"],
+[class*="sponsor"],
+iframe[src*="ads"] {
+  display: none !important;
+}

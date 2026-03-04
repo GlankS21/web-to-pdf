@@ -4,6 +4,7 @@ import SignUpPage from './pages/SignUpPage';
 import ConvertPage from './pages/ConvertPage';
 import {Toaster} from 'sonner';
 import ProtectedRoute from './components/auth/ProtectedRoute';
+import EditorPage from './pages/EditorPage';
 
 function App() {
   return (
@@ -20,11 +21,12 @@ function App() {
             path='/signup'
             element={<SignUpPage/>}
           />
+          <Route path="/editor" element={<EditorPage />} />
+          <Route
+            path='/'
+            element={<ConvertPage/>}
+          />
           <Route element={<ProtectedRoute />}>
-            <Route
-              path='/'
-              element={<ConvertPage/>}
-            />
           </Route>
         </Routes>
       </BrowserRouter>

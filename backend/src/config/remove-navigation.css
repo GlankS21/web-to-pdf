@@ -1,0 +1,6 @@
+nav,
+.navbar,
+.navigation,
+[role="navigation"] {
+  display: none !important;
+}

@@ -1,0 +1,38 @@
+/* src/config/css-presets/remove-recommendations.css */
+
+/* Bắt class chứa "recommend" */
+[class*="recommend"] {
+  visibility: hidden !important;
+  height: 0 !important;
+  overflow: hidden !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+/* Bắt các từ khóa liên quan */
+[class*="Related"],
+[class*="similar"],
+[class*="suggested"],
+[class*="alsoBought"],
+[class*="youMayLike"],
+[class*="recommended"] {
+  visibility: hidden !important;
+  height: 0 !important;
+  overflow: hidden !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+/* Print mode */
+@media print {
+  [class*="recommend"],
+  [class*="Related"],
+  [class*="similar"] {
+    display: none !important;
+  }
+}
+
+[class*="section--isPrimaryHeader"] {
+  visibility: hidden !important;
+  height: 0 !important;
+}
