@@ -1,22 +1,17 @@
 footer, .footer {
   display: none;
-  visibility: hidden !important;
-  height: 0 !important;
 }
 
 .pageLayout__footer {
-  visibility: hidden !important;
-  height: 0 !important;
+  display: none;
 }
 
 [class*="footer"] {
-  visibility: hidden !important;
-  height: 0 !important;
+  display: none;
 }
 
 @media print {
   footer, .footer, .pageLayout__footer, [class*="footer"] {
-    visibility: hidden !important;
-    height: 0 !important;
+    display: none;
   }
 }

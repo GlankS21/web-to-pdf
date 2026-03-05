@@ -1,6 +1,0 @@
-/* src/config/css-presets/remove-sidebar.css */
-aside,
-.sidebar,
-[role="complementary"] {
-  display: none !important;
-}

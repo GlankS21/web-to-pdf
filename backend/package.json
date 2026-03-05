@@ -12,11 +12,13 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@mozilla/readability": "^0.6.0",
     "bcrypt": "^6.0.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^17.2.4",
     "express": "^5.2.1",
+    "jsdom": "^28.1.0",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.1.6",
     "puppeteer": "^24.37.2",

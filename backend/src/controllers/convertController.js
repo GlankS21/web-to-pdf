@@ -1,4 +1,3 @@
-// controllers/convertController.js
 import puppeteer from 'puppeteer';
 import fs from 'fs';
 import path from 'path';
@@ -15,137 +14,323 @@ const loadCSS = (filename) => {
     console.error(`Failed to load CSS: ${filename}`, error);
     return '';
   }
-};
+}
 
 const createFilename = (url) => { return new URL(url).hostname.replace(/^www\./, '').split('.')[0] + '.pdf';};
 
-export const urlToPdf = async (req, res) => {
+const previewCache = new Map();
+
+export const previewWebsite = async (req, res) => {
   let browser;
   try {
-    const { url, options = {} } = req.body;
+    const { url } = req.body;
+    
     if (!url) {
-      return res.status(400).json({ 
-        error: 'URL is required' 
-      });
+      return res.status(400).json({ error: 'URL is required' });
     }
 
-    // Create file name from url string
-    const filename = createFilename(url);
-    console.log('Converting:', url);
+    console.log('🌐 Creating interactive preview:', url);
 
-    // Run browser
     browser = await puppeteer.launch({
-      headless: true, // run browser in the background
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-blink-features=AutomationControlled',
-        '--disable-dev-shm-usage',
-        '--disable-web-security', 
-        '--disable-features=IsolateOrigins,site-per-process'
-      ]
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      protocolTimeout: 120000
     });
 
     const page = await browser.newPage();
+    page.setDefaultTimeout(120000);
 
-    // FAKE USER AGENT - Quan trọng!
     await page.setUserAgent(
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     );
 
-    // Set viewport
-    await page.setViewport({
-      width: options.viewportWidth || 1600,
-      height: options.viewportHeight || 1200
+    await page.setViewport({ width: 1600, height: 1200 });
+
+    await page.goto(url, {
+      waitUntil: 'networkidle2',
+      timeout: 60000
     });
 
-    // HEADERS - Giả như browser thật
-    await page.setExtraHTTPHeaders({
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-      'Accept-Encoding': 'gzip, deflate, br',
-      'Connection': 'keep-alive',
-      'Upgrade-Insecure-Requests': '1'
+    await new Promise(r => setTimeout(r, 2000));
+
+    console.log('✅ Website loaded');
+
+    // Inline CSS
+    await page.evaluate(() => {
+      const styles = [];
+      
+      document.querySelectorAll('style').forEach(style => {
+        styles.push(style.textContent);
+      });
+      
+      for (const sheet of document.styleSheets) {
+        try {
+          const rules = Array.from(sheet.cssRules || []);
+          const css = rules.map(rule => rule.cssText).join('\n');
+          if (css) styles.push(css);
+        } catch (e) {}
+      }
+      
+      document.querySelectorAll('link[rel="stylesheet"]').forEach(link => link.remove());
+      
+      const combinedStyle = document.createElement('style');
+      combinedStyle.textContent = styles.join('\n');
+      document.head.insertBefore(combinedStyle, document.head.firstChild);
     });
 
-    // Emulate screen media
-    if (options.emulateScreenMedia !== false) {
-      await page.emulateMediaType('screen');
+    // ADD BASE TAG - CRITICAL!
+    await page.evaluate((baseUrl) => {
+      // Remove existing base tags
+      document.querySelectorAll('base').forEach(b => b.remove());
+      
+      // Add new base tag
+      const base = document.createElement('base');
+      base.href = baseUrl;
+      document.head.insertBefore(base, document.head.firstChild);
+      
+      console.log('Base tag added:', baseUrl);
+    }, url);
+
+    // Fix absolute URLs for images
+    await page.evaluate((baseUrl) => {
+      document.querySelectorAll('img').forEach(img => {
+        if (img.src && !img.src.startsWith('data:')) {
+          img.src = new URL(img.src, baseUrl).href;
+        }
+      });
+      
+      document.querySelectorAll('[style*="background"]').forEach(el => {
+        const style = el.getAttribute('style') || '';
+        const fixed = style.replace(/url\(['"]?([^'")]+)['"]?\)/g, (match, url) => {
+          if (url.startsWith('data:')) return match;
+          return `url('${new URL(url, baseUrl).href}')`;
+        });
+        el.setAttribute('style', fixed);
+      });
+      
+      // REMOVE ALL SCRIPTS - Tránh errors
+      document.querySelectorAll('script').forEach(script => {
+        script.remove();
+        console.log('Removed script:', script.src || 'inline');
+      });
+      
+      // Disable links
+      document.querySelectorAll('a').forEach(a => {
+        a.href = 'javascript:void(0)';
+      });
+    }, url);
+
+    // INJECT BLOCKER CSS
+    await page.evaluate(() => {
+      const blockerStyle = document.createElement('style');
+      blockerStyle.id = 'BLOCKER_STYLES_INJECTED';
+      blockerStyle.textContent = `
+        .iframe-hover-highlight {
+          outline: 5px solid #ff0000 !important;
+          outline-offset: 2px !important;
+          cursor: pointer !important;
+          background: rgba(255, 0, 0, 0.2) !important;
+          z-index: 999999 !important;
+        }
+        .iframe-blocked {
+          display: none !important;
+        }
+      `;
+      document.head.appendChild(blockerStyle);
+      console.log('Blocker styles injected');
+    });
+
+    const html = await page.content();
+    await browser.close();
+
+    const previewId = Math.random().toString(36).substring(7);
+    previewCache.set(previewId, html);
+    setTimeout(() => previewCache.delete(previewId), 10 * 60 * 1000);
+
+    console.log('✅ Preview cached:', previewId);
+
+    res.json({ previewId });
+
+  } catch (error) {
+    if (browser) await browser.close();
+    console.error('❌ Preview error:', error.message);
+    res.status(500).json({ error: 'Preview failed', message: error.message });
+  }
+};
+export const getPreview = (req, res) => {
+  const { id } = req.params;
+  const html = previewCache.get(id);
+  
+  if (!html) {
+    return res.status(404).send('Preview not found or expired');
+  }
+  
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Access-Control-Allow-Origin', 'http://localhost:5173'); // ← QUAN TRỌNG
+  res.setHeader('Access-Control-Allow-Methods', 'GET');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.send(html);
+};
+// CONTROLLER 2: Convert URL to PDF
+export const urlToPdf = async (req, res) => {
+  let browser;
+  try {
+    const { url, options = {} } = req.body;
+    
+    if (!url) {
+      return res.status(400).json({ error: 'URL is required' });
     }
 
-    // Anti-bot detection - TĂNG CƯỜNG
+    const filename = options.filename || createFilename(url);
+    console.log('Converting:', url);
+
+    browser = await puppeteer.launch({
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-blink-features=AutomationControlled',
+        '--disable-dev-shm-usage'
+      ],
+      protocolTimeout: 120000
+    });
+
+    const page = await browser.newPage();
+    page.setDefaultTimeout(120000);
+    page.setDefaultNavigationTimeout(120000);
+
+    await page.setUserAgent(
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    );
+
+    await page.setViewport({
+      width: 1600,
+      height: 1200
+    });
+
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': 'en-US,en;q=0.9',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+    });
+
     await page.evaluateOnNewDocument(() => {
-      // Xóa webdriver
       Object.defineProperty(navigator, 'webdriver', { get: () => false });
-      
-      // Fake chrome object
-      window.navigator.chrome = { 
-        runtime: {},
-        loadTimes: function() {},
-        csi: function() {},
-        app: {}
-      };
-      
-      // Fake plugins
+      window.navigator.chrome = { runtime: {}, app: {} };
       Object.defineProperty(navigator, 'plugins', { 
-        get: () => [
-          { name: 'Chrome PDF Plugin' },
-          { name: 'Chrome PDF Viewer' },
-          { name: 'Native Client' }
-        ] 
+        get: () => [{ name: 'Chrome PDF Plugin' }] 
       });
-      
-      // Fake languages
-      Object.defineProperty(navigator, 'languages', { 
-        get: () => ['en-US', 'en'] 
-      });
-      
-      // Fake permissions
-      const originalQuery = window.navigator.permissions.query;
-      window.navigator.permissions.query = (parameters) => (
-        parameters.name === 'notifications' ?
-          Promise.resolve({ state: Notification.permission }) :
-          originalQuery(parameters)
-      );
-      
-      // Override toString
-      window.navigator.chrome.runtime.sendMessage = () => {};
     });
 
     console.log('📡 Loading page...');
     
-    try {
-      await page.goto(url, {
-        waitUntil: 'networkidle2',
-        timeout: 30000
-      });
-    } catch (gotoError) {
-      console.warn('Retrying');
-      await page.goto(url, {
-        waitUntil: 'domcontentloaded',
-        timeout: 30000
-      });
-      await new Promise(r => setTimeout(r, 5000));
+    await page.goto(url, {
+      waitUntil: 'networkidle2',
+      timeout: 60000
+    });
+
+    console.log('✅ Page loaded');
+
+    // Accept cookies
+    if (options.acceptCookies !== false) {
+      await acceptCookies(page);
     }
 
-    console.log('Page loaded');
+    // Keep content only (with custom selector)
+    if (options.keepContentOnly) {
+      console.log('📝 Isolating main content block...');
+      
+      try {
+        const customSelector = options.contentSelector;
+        
+        await page.evaluate((selector) => {
+          let contentBlock = null;
+          
+          if (selector) {
+            // User provided selector
+            contentBlock = document.querySelector(selector);
+            console.log('Using custom selector:', selector);
+          } else {
+            // Fallback: auto-detect
+            const mainSelectors = [
+              'main',
+              'article',
+              '[role="main"]',
+              '#main',
+              '#content',
+              '.content',
+              '.main-content',
+              '.post-content',
+              '.article-content',
+              '.entry-content'
+            ];
+            
+            for (const sel of mainSelectors) {
+              const el = document.querySelector(sel);
+              if (el) {
+                contentBlock = el;
+                console.log('Auto-detected:', sel);
+                break;
+              }
+            }
+          }
+          
+          if (contentBlock) {
+            // Create Set of elements to keep
+            const keepElements = new Set();
+            
+            // Keep content block + all children
+            keepElements.add(contentBlock);
+            contentBlock.querySelectorAll('*').forEach(el => keepElements.add(el));
+            
+            // Keep parent chain
+            let current = contentBlock.parentElement;
+            while (current) {
+              keepElements.add(current);
+              current = current.parentElement;
+            }
+            
+            // Hide everything else
+            document.querySelectorAll('*').forEach(el => {
+              if (!keepElements.has(el)) {
+                el.style.setProperty('display', 'none', 'important');
+              }
+            });
+            
+            // Clean body styling
+            document.body.style.margin = '0';
+            document.body.style.padding = '20px';
+            
+            console.log('Content isolated successfully');
+          } else {
+            console.warn('Content block not found');
+          }
+          
+        }, customSelector);
+        
+        await new Promise(r => setTimeout(r, 500));
+        console.log('✅ Main content isolated');
+        
+      } catch (error) {
+        console.error('❌ Error isolating content:', error.message);
+        console.log('ℹ️ Continuing with full page');
+      }
+    }
 
-    // Auto accept cookies
-    await acceptCookies(page);
-
-    // Inject CSS
-    const customCSS = buildCSS(options);
-    if (customCSS) {
-      await page.addStyleTag({ content: customCSS });
-      await new Promise(r => setTimeout(r, 1000));
-      console.log('CSS injected');
+    // Inject custom CSS (if not using keepContentOnly)
+    if (!options.keepContentOnly) {
+      const customCSS = buildCSS(options);
+      if (customCSS) {
+        await page.addStyleTag({ content: customCSS });
+        await new Promise(r => setTimeout(r, 1000));
+        console.log('💉 CSS injected');
+      }
     }
 
     const pageTitle = await page.title();
     const currentDate = new Date().toLocaleDateString();
 
-    // Create pdf file
-    console.log('Generating PDF.');
+    console.log('📄 Generating PDF...');
+
     const pdfBuffer = await page.pdf({
       format: options.format || 'A4',
       printBackground: options.printBackground !== false,
@@ -163,7 +348,7 @@ export const urlToPdf = async (req, res) => {
     });
 
     await browser.close();
-    console.log('PDF generated successfully');
+    console.log('✅ PDF generated successfully');
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
@@ -171,7 +356,7 @@ export const urlToPdf = async (req, res) => {
 
   } catch (error) {
     if (browser) await browser.close();
-    console.error('Error:', error.message);
+    console.error('❌ Error:', error.message);
     res.status(500).json({
       error: 'Conversion failed',
       message: error.message
@@ -180,37 +365,36 @@ export const urlToPdf = async (req, res) => {
 };
 
 const acceptCookies = async (page) => {
-  const cookieSelectors = [
-    'button:has-text("Accept")', 
-    'button:has-text("Accept all")',
-    'button:has-text("Принять")', 
-    'button:has-text("Согласен")',
-    'button:has-text("Хорошо")',
-    '[id*="accept"][id*="cookie"]', '[class*="accept"][class*="cookie"]'
-  ];
-
-  for(const selector of cookieSelectors){
-    try{
-      const button = await page.$(selector);
-      if(button){
-        await button.click();
-        console.log('Cookie accepted');
-        await new Promise(r => setTimeout(r, 1000));
-        break;
-      } 
-    } catch(error){}
-  } 
+  try {
+    await new Promise(r => setTimeout(r, 1000));
+    const clicked = await Promise.race([
+      page.evaluate(() => {
+        const texts = ['accept', 'хорошо', 'принять', 'согласен', 'ok'];
+        const elements = document.querySelectorAll('button, a, [role="button"]');
+        
+        for (const element of elements) {
+          if (texts.some(t => element.textContent.toLowerCase().includes(t))) {
+            element.click();
+            return true;
+          }
+        }
+        return false;
+      }),
+      new Promise(resolve => setTimeout(() => resolve(false), 1000))
+    ]).catch(() => false);
+    
+    if (clicked) {
+      console.log('Cookie accepted');
+      await new Promise(r => setTimeout(r, 1000));
+    }
+  } catch (error) {}
 };
 
 const buildCSS = (options) => {
   let css = '';
   const cssFiles = [
     { condition: options.removeHeader, file: 'remove-header.css' },
-    { condition: options.removeFooter, file: 'remove-footer.css' },
-    { condition: options.removeNavigation, file: 'remove-navigation.css' },
-    { condition: options.removeAds, file: 'remove-ads.css' },
-    { condition: options.removeSidebar, file: 'remove-sidebar.css' },
-    { condition: options.removeRecommendations, file: 'remove-recommendations.css' }
+    { condition: options.removeFooter, file: 'remove-footer.css' }
   ];
 
   cssFiles.forEach(({ condition, file }) => {

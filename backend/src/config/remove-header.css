@@ -1,4 +1,7 @@
-header, .header,
-[role="banner"] {
+header, .header, [role="banner"] {
   display: none !important;
+}
+
+main{
+  margin-top: 0 !important;
 }

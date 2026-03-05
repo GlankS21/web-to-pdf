@@ -1,522 +1,329 @@
-// src/pages/ConvertPage.tsx
-import React, { useState } from 'react';
-import axios from 'axios';
+import React, { useState, useRef, useEffect } from 'react'
+import axios from 'axios'
 
 const ConvertPage: React.FC = () => {
-  const [url, setUrl] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [pdfPreview, setPdfPreview] = useState<string | null>(null);
+  const [url, setUrl] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const [pdfPreview, setPdfPreview] = useState<string | null>(null)
+  const [previewHtml, setPreviewHtml] = useState<string | null>(null)
+
+  const [blockedSelectors, setBlockedSelectors] = useState<string[]>([])
+  const [isBlockMode, setIsBlockMode] = useState(false)
+
+  const iframeRef = useRef<HTMLIFrameElement>(null)
 
   const [options, setOptions] = useState({
     filename: '',
     format: 'A4',
     landscape: false,
-    scale: 1.0,
+    scale: 1,
     printBackground: true,
     marginTop: '80px',
     marginRight: '40px',
     marginBottom: '80px',
     marginLeft: '40px',
-    viewportWidth: 1366,
-    viewportHeight: 768,
     displayHeaderFooter: true,
     customCSS: '',
-    removeElements: [] as string[],
-    waitAfterLoad: 5000,
-    // Quick remove options
     acceptCookies: true,
     removeHeader: false,
-    removeFooter: false,
-    removeAds: false,
-    removeRecommendations: false,
-    removeSidebar: false,
-    removeNavigation: false,
-    removeCookieBanner: false,
-    expandImages: false
-  });
+    removeFooter: false
+  })
 
-  const handlePreview = async () => {
-    if (!url) {
-      alert('Please enter a URL');
-      return;
+  /* ==============================
+     Generate CSS selector
+  ============================== */
+
+  const generateSelector = (el: HTMLElement): string => {
+    if (el.id) return '#' + CSS.escape(el.id)
+
+    if (el.className && typeof el.className === 'string') {
+      const classes = el.className.trim().split(/\s+/).filter(Boolean)
+      if (classes.length) {
+        return '.' + classes.map(c => CSS.escape(c)).join('.')
+      }
     }
 
-    setLoading(true);
+    const parent = el.parentElement
+    if (parent) {
+      const siblings = Array.from(parent.children).filter(
+        c => c.tagName === el.tagName
+      )
+      if (siblings.length > 1) {
+        const index = siblings.indexOf(el) + 1
+        return `${el.tagName.toLowerCase()}:nth-of-type(${index})`
+      }
+    }
+
+    return el.tagName.toLowerCase()
+  }
+
+  /* ==============================
+     IFRAME BLOCK MODE FIXED
+  ============================== */
+
+  useEffect(() => {
+    const iframe = iframeRef.current
+    if (!iframe || !previewHtml) return
+
+    let iframeDoc: Document | null = null
+
+    const setupListeners = () => {
+      iframeDoc = iframe.contentDocument
+      if (!iframeDoc) {
+        console.log('Cannot access iframe document')
+        return
+      }
+
+      const handleMouseMove = (e: MouseEvent) => {
+        if (!isBlockMode) return
+
+        const target = e.target as HTMLElement
+        if (!target) return
+
+        iframeDoc!
+          .querySelectorAll('.iframe-hover-highlight')
+          .forEach(el => el.classList.remove('iframe-hover-highlight'))
+
+        if (
+          target !== iframeDoc!.body &&
+          target !== iframeDoc!.documentElement
+        ) {
+          target.classList.add('iframe-hover-highlight')
+        }
+      }
+
+      const handleClick = (e: MouseEvent) => {
+        if (!isBlockMode) return
+
+        e.preventDefault()
+        e.stopPropagation()
+
+        const target = e.target as HTMLElement
+        if (!target) return
+
+        const selector = generateSelector(target)
+
+        setBlockedSelectors(prev => [...prev, selector])
+
+        target.classList.remove('iframe-hover-highlight')
+        target.classList.add('iframe-blocked')
+      }
+
+      iframeDoc.addEventListener('mousemove', handleMouseMove)
+      iframeDoc.addEventListener('click', handleClick, true)
+
+      // Cleanup
+      return () => {
+        iframeDoc?.removeEventListener('mousemove', handleMouseMove)
+        iframeDoc?.removeEventListener('click', handleClick, true)
+      }
+    }
+
+    if (iframe.contentDocument?.readyState === 'complete') {
+      return setupListeners()
+    } else {
+      iframe.onload = setupListeners
+    }
+  }, [previewHtml, isBlockMode])
+
+  /* ==============================
+     Sync blockedSelectors → customCSS
+  ============================== */
+
+  useEffect(() => {
+    if (blockedSelectors.length === 0) {
+      setOptions(prev => ({ ...prev, customCSS: '' }))
+      return
+    }
+
+    const css = blockedSelectors
+      .map(s => `${s} { display: none !important; }`)
+      .join('\n')
+
+    setOptions(prev => ({ ...prev, customCSS: css }))
+  }, [blockedSelectors])
+
+  /* ==============================
+     LOAD PREVIEW
+  ============================== */
+
+  const handleLoadPreview = async () => {
+    if (!url) return alert('Enter URL')
+
+    setLoading(true)
+    setPdfPreview(null)
+    setBlockedSelectors([])
+    setIsBlockMode(false)
+
+    try {
+      const { data } = await axios.post(
+        'http://localhost:5001/api/convert/preview',
+        { url }
+      )
+
+      const htmlRes = await axios.get(
+        `http://localhost:5001/api/convert/preview/${data.previewId}`
+      )
+
+      setPreviewHtml(htmlRes.data)
+    } catch (err) {
+      console.error(err)
+      alert('Failed to load preview')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  /* ==============================
+     GENERATE PDF
+  ============================== */
+
+  const handleGeneratePdf = async () => {
+    if (!url) return alert('Enter URL')
+
+    setLoading(true)
+
     try {
       const response = await axios.post(
         'http://localhost:5001/api/convert/url-to-pdf',
-        {
-          url,
-          options // Gửi trực tiếp options, backend tự xử lý
-        },
-        {
-          responseType: 'blob'
-        }
+        { url, options, blockedSelectors },
+        { responseType: 'blob' }
       );
 
-      const blob = new Blob([response.data], { type: 'application/pdf' });
-      const previewUrl = URL.createObjectURL(blob);
-      setPdfPreview(previewUrl);
+      const blob = new Blob([response.data], {
+        type: 'application/pdf'
+      })
 
-      console.log('✅ PDF preview ready');
-    } catch (error: any) {
-      console.error('Error generating preview:', error);
-      alert('Failed to generate preview: ' + (error.response?.data?.message || error.message));
+      setPdfPreview(URL.createObjectURL(blob))
+      setPreviewHtml(null)
+    } catch (err) {
+      console.error(err)
+      alert('PDF failed')
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
 
-  const handleDownload = () => {
-    if (!pdfPreview) return;
+  /* ==============================
+     UNDO / RESET
+  ============================== */
 
-    const link = document.createElement('a');
-    link.href = pdfPreview;
-    link.download = options.filename || 'document.pdf';
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
+  const handleUndo = () => {
+    if (!blockedSelectors.length) return
+
+    const last = blockedSelectors[blockedSelectors.length - 1]
+    setBlockedSelectors(prev => prev.slice(0, -1))
+
+    const iframeDoc = iframeRef.current?.contentDocument
+    const el = iframeDoc?.querySelector(last)
+    el?.classList.remove('iframe-blocked')
+  }
 
   const handleReset = () => {
-    setPdfPreview(null);
-    setUrl('');
-  };
+    const iframeDoc = iframeRef.current?.contentDocument
+    iframeDoc
+      ?.querySelectorAll('.iframe-blocked')
+      .forEach(el => el.classList.remove('iframe-blocked'))
+
+    setBlockedSelectors([])
+  }
+
+  /* ==============================
+     UI
+  ============================== */
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-7xl mx-auto px-4 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Left Panel - Controls */}
-          <div className="bg-white rounded-lg shadow-sm p-6 overflow-y-auto max-h-screen">
-            <h1 className="text-2xl font-bold mb-6">URL to PDF Converter</h1>
+    <div className="min-h-screen bg-gray-100 p-8">
+      <div className="max-w-6xl mx-auto">
 
-            {/* URL Input */}
-            <div className="mb-6">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                URL
-              </label>
-              <input
-                type="text"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="https://example.com"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
+        <h1 className="text-3xl font-bold mb-8">
+          URL to PDF Converter
+        </h1>
 
-            {/* Quick Remove Options */}
-            <div className="mb-6 pb-6 border-b">
-              <h3 className="font-semibold mb-3">Quick Remove Options</h3>
-              <div className="grid grid-cols-2 gap-3">
-                <label className="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                  <input
-                    type="checkbox"
-                    checked={options.acceptCookies}
-                    onChange={(e) => setOptions({ ...options, acceptCookies: e.target.checked })}
-                    className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                  />
-                  <span className="ml-2 text-sm">🍪 Auto Accept Cookies</span>
-                </label>
+        <div className="bg-white p-6 rounded shadow mb-6">
 
-                <label className="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                  <input
-                    type="checkbox"
-                    checked={options.expandImages}
-                    onChange={(e) => setOptions({ ...options, expandImages: e.target.checked })}
-                    className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                  />
-                  <span className="ml-2 text-sm">🖼️ Expand All Images</span>
-                </label>
+          <input
+            value={url}
+            onChange={e => setUrl(e.target.value)}
+            placeholder="https://example.com"
+            className="w-full px-3 py-2 border rounded mb-4"
+          />
 
-                <label className="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                  <input
-                    type="checkbox"
-                    checked={options.removeHeader}
-                    onChange={(e) => setOptions({ ...options, removeHeader: e.target.checked })}
-                    className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                  />
-                  <span className="ml-2 text-sm">🔝 Remove Header</span>
-                </label>
-
-                <label className="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                  <input
-                    type="checkbox"
-                    checked={options.removeFooter}
-                    onChange={(e) => setOptions({ ...options, removeFooter: e.target.checked })}
-                    className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                  />
-                  <span className="ml-2 text-sm">⬇️ Remove Footer</span>
-                </label>
-
-                <label className="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                  <input
-                    type="checkbox"
-                    checked={options.removeAds}
-                    onChange={(e) => setOptions({ ...options, removeAds: e.target.checked })}
-                    className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                  />
-                  <span className="ml-2 text-sm">🚫 Remove Ads</span>
-                </label>
-
-                <label className="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                  <input
-                    type="checkbox"
-                    checked={options.removeRecommendations}
-                    onChange={(e) => setOptions({ ...options, removeRecommendations: e.target.checked })}
-                    className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                  />
-                  <span className="ml-2 text-sm">💡 Remove Recommendations</span>
-                </label>
-
-                <label className="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                  <input
-                    type="checkbox"
-                    checked={options.removeSidebar}
-                    onChange={(e) => setOptions({ ...options, removeSidebar: e.target.checked })}
-                    className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                  />
-                  <span className="ml-2 text-sm">📌 Remove Sidebar</span>
-                </label>
-
-                <label className="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                  <input
-                    type="checkbox"
-                    checked={options.removeNavigation}
-                    onChange={(e) => setOptions({ ...options, removeNavigation: e.target.checked })}
-                    className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                  />
-                  <span className="ml-2 text-sm">🧭 Remove Navigation</span>
-                </label>
-
-                <label className="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
-                  <input
-                    type="checkbox"
-                    checked={options.removeCookieBanner}
-                    onChange={(e) => setOptions({ ...options, removeCookieBanner: e.target.checked })}
-                    className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                  />
-                  <span className="ml-2 text-sm">🍪 Remove Cookie Banner</span>
-                </label>
-              </div>
-            </div>
-
-            {/* Basic Options */}
-            <div className="space-y-4 mb-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Filename (optional)
-                </label>
-                <input
-                  type="text"
-                  value={options.filename}
-                  onChange={(e) => setOptions({ ...options, filename: e.target.value })}
-                  placeholder="my-document.pdf"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Format
-                  </label>
-                  <select
-                    value={options.format}
-                    onChange={(e) => setOptions({ ...options, format: e.target.value })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="A4">A4</option>
-                    <option value="A3">A3</option>
-                    <option value="Letter">Letter</option>
-                    <option value="Legal">Legal</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Scale
-                  </label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="0.1"
-                    max="2"
-                    value={options.scale}
-                    onChange={(e) => setOptions({ ...options, scale: parseFloat(e.target.value) })}
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-4">
-                <label className="flex items-center">
-                  <input
-                    type="checkbox"
-                    checked={options.landscape}
-                    onChange={(e) => setOptions({ ...options, landscape: e.target.checked })}
-                    className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                  />
-                  <span className="ml-2 text-sm text-gray-700">Landscape</span>
-                </label>
-
-                <label className="flex items-center">
-                  <input
-                    type="checkbox"
-                    checked={options.printBackground}
-                    onChange={(e) => setOptions({ ...options, printBackground: e.target.checked })}
-                    className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                  />
-                  <span className="ml-2 text-sm text-gray-700">Print Background</span>
-                </label>
-              </div>
-            </div>
-
-            {/* Advanced Options */}
+          <div className="flex gap-4">
             <button
-              onClick={() => setShowAdvanced(!showAdvanced)}
-              className="mb-4 text-blue-600 hover:text-blue-700 text-sm font-medium"
+              onClick={handleLoadPreview}
+              disabled={loading}
+              className="px-6 py-2 bg-blue-600 text-white rounded"
             >
-              {showAdvanced ? '▼ Hide Advanced Options' : '▶ Show Advanced Options'}
+              {loading ? 'Loading...' : 'Load Preview'}
             </button>
 
-            {showAdvanced && (
-              <div className="border-t pt-4 space-y-4">
-                <h3 className="font-semibold mb-4">Advanced Options</h3>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Margin Top
-                    </label>
-                    <input
-                      type="text"
-                      value={options.marginTop}
-                      onChange={(e) => setOptions({ ...options, marginTop: e.target.value })}
-                      placeholder="80px"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Margin Right
-                    </label>
-                    <input
-                      type="text"
-                      value={options.marginRight}
-                      onChange={(e) => setOptions({ ...options, marginRight: e.target.value })}
-                      placeholder="40px"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Margin Bottom
-                    </label>
-                    <input
-                      type="text"
-                      value={options.marginBottom}
-                      onChange={(e) => setOptions({ ...options, marginBottom: e.target.value })}
-                      placeholder="80px"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Margin Left
-                    </label>
-                    <input
-                      type="text"
-                      value={options.marginLeft}
-                      onChange={(e) => setOptions({ ...options, marginLeft: e.target.value })}
-                      placeholder="40px"
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Viewport Width
-                    </label>
-                    <input
-                      type="number"
-                      value={options.viewportWidth}
-                      onChange={(e) => setOptions({ ...options, viewportWidth: parseInt(e.target.value) })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Viewport Height
-                    </label>
-                    <input
-                      type="number"
-                      value={options.viewportHeight}
-                      onChange={(e) => setOptions({ ...options, viewportHeight: parseInt(e.target.value) })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Wait After Load (ms)
-                  </label>
-                  <input
-                    type="number"
-                    value={options.waitAfterLoad}
-                    onChange={(e) => setOptions({ ...options, waitAfterLoad: parseInt(e.target.value) })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Custom CSS
-                  </label>
-                  <textarea
-                    value={options.customCSS}
-                    onChange={(e) => setOptions({ ...options, customCSS: e.target.value })}
-                    placeholder="body { font-size: 14px; }"
-                    rows={3}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Additional Elements to Remove (comma separated)
-                  </label>
-                  <input
-                    type="text"
-                    value={options.removeElements.join(', ')}
-                    onChange={(e) => setOptions({ 
-                      ...options, 
-                      removeElements: e.target.value.split(',').map(s => s.trim()).filter(s => s) 
-                    })}
-                    placeholder=".custom-class, #custom-id"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="flex items-center">
-                    <input
-                      type="checkbox"
-                      checked={options.displayHeaderFooter}
-                      onChange={(e) => setOptions({ ...options, displayHeaderFooter: e.target.checked })}
-                      className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                    />
-                    <span className="ml-2 text-sm text-gray-700">Display PDF Header/Footer</span>
-                  </label>
-                </div>
-              </div>
-            )}
-
-            {/* Buttons */}
-            <div className="mt-6 space-y-3">
-              <button
-                onClick={handlePreview}
-                disabled={loading}
-                className="w-full px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors font-medium"
-              >
-                {loading ? (
-                  <div className="flex items-center justify-center gap-2">
-                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                    Generating Preview...
-                  </div>
-                ) : (
-                  '👁️ Generate Preview'
-                )}
-              </button>
-
-              {pdfPreview && (
-                <>
-                  <button
-                    onClick={handleDownload}
-                    className="w-full px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
-                  >
-                    📥 Download PDF
-                  </button>
-                  <button
-                    onClick={handleReset}
-                    className="w-full px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors font-medium"
-                  >
-                    🔄 New Conversion
-                  </button>
-                </>
-              )}
-            </div>
-
-            {/* Presets */}
-            <div className="mt-6 pt-6 border-t">
-              <h3 className="font-semibold mb-3 text-sm">Quick Presets</h3>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => setOptions({
-                    ...options,
-                    removeHeader: false,
-                    removeFooter: false,
-                    removeAds: false,
-                    removeRecommendations: false,
-                    removeSidebar: false,
-                    removeNavigation: false
-                  })}
-                  className="px-3 py-2 bg-gray-100 rounded hover:bg-gray-200 text-sm"
-                >
-                  📄 Full Page
-                </button>
-                <button
-                  onClick={() => setOptions({
-                    ...options,
-                    removeHeader: true,
-                    removeFooter: true,
-                    removeAds: true,
-                    removeRecommendations: true,
-                    removeSidebar: true,
-                    removeNavigation: true
-                  })}
-                  className="px-3 py-2 bg-gray-100 rounded hover:bg-gray-200 text-sm"
-                >
-                  🎯 Clean Content
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Right Panel - Preview */}
-          <div className="bg-white rounded-lg shadow-sm p-6 sticky top-8 h-fit">
-            <h2 className="text-xl font-bold mb-4">PDF Preview</h2>
-            
-            {!pdfPreview ? (
-              <div className="flex items-center justify-center h-[600px] border-2 border-dashed border-gray-300 rounded-lg">
-                <div className="text-center text-gray-500">
-                  <div className="text-6xl mb-4">📄</div>
-                  <p className="text-lg">No preview yet</p>
-                  <p className="text-sm mt-2">Click "Generate Preview" to see your PDF</p>
-                </div>
-              </div>
-            ) : (
-              <div className="border rounded-lg overflow-hidden">
-                <iframe
-                  src={pdfPreview}
-                  className="w-full h-[600px]"
-                  title="PDF Preview"
-                />
-              </div>
-            )}
+            <button
+              onClick={handleGeneratePdf}
+              disabled={loading}
+              className="px-6 py-2 bg-green-600 text-white rounded"
+            >
+              Generate PDF
+            </button>
           </div>
         </div>
+
+        {previewHtml && (
+          <div className="bg-white p-6 rounded shadow mb-6">
+            <div className="flex gap-4 mb-4">
+
+              <button
+                onClick={() => setIsBlockMode(!isBlockMode)}
+                className={`px-6 py-2 rounded text-white ${
+                  isBlockMode ? 'bg-green-600' : 'bg-red-600'
+                }`}
+              >
+                {isBlockMode ? 'Block Mode ON' : 'Enable Block Mode'}
+              </button>
+
+              <button
+                onClick={handleUndo}
+                disabled={!blockedSelectors.length}
+                className="px-6 py-2 bg-orange-600 text-white rounded"
+              >
+                Undo
+              </button>
+
+              <button
+                onClick={handleReset}
+                className="px-6 py-2 bg-gray-600 text-white rounded"
+              >
+                Reset
+              </button>
+
+              <span className="px-4 py-2 bg-gray-100 rounded">
+                Blocked: {blockedSelectors.length}
+              </span>
+            </div>
+
+            <iframe
+              ref={iframeRef}
+              srcDoc={previewHtml}
+              sandbox="allow-same-origin"
+              className="w-full h-[500px] border"
+              title="Preview"
+            />
+          </div>
+        )}
+
+        {pdfPreview && (
+          <div className="bg-white p-6 rounded shadow">
+            <iframe
+              src={pdfPreview}
+              className="w-full h-[500px]"
+              title="PDF Preview"
+            />
+          </div>
+        )}
       </div>
     </div>
-  );
-};
+  )
+}
 
-export default ConvertPage;
+export default ConvertPage
