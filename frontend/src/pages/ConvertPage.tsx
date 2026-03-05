@@ -102,7 +102,14 @@ const ConvertPage: React.FC = () => {
         const target = e.target as HTMLElement
         if (!target) return
 
-        const selector = generateSelector(target)
+        let selector = generateSelector(target)
+
+        selector = selector
+          .replace(/\.iframe-hover-highlight/g, '')
+          .replace(/\.iframe-blocked/g, '')
+          .trim()
+        
+        console.log('Clean selector:', selector) 
 
         setBlockedSelectors(prev => [...prev, selector])
 

@@ -18,349 +18,245 @@ const loadCSS = (filename) => {
 
 const createFilename = (url) => { return new URL(url).hostname.replace(/^www\./, '').split('.')[0] + '.pdf';};
 
+const DEFAULT_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+// Launch a Puppeteer browser 
+const launchBrowser = (extraArgs = []) => puppeteer.launch({
+  headless: true,
+  args: ['--no-sandbox', '--disable-setuid-sandbox', ...extraArgs],
+  protocolTimeout: 120_000,
+});
+
+//  Configure a new page (timeout, user-agent, viewport)
+const setupPage = async (browser, { width = 1600, height = 1200 } = {}) => {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(120_000);
+  page.setDefaultNavigationTimeout(120_000);
+  await page.setUserAgent(DEFAULT_USER_AGENT);
+  await page.setViewport({ width, height });
+  return page;
+};
+
+const gotoPage = (page, url) => page.goto(url, { waitUntil: 'networkidle2', timeout: 60_000 });
+
+const closeBrowser = async (browser) => {
+  if (browser) {
+    try {
+      await browser.close();
+    } catch (_) {}
+  }
+};
+
+const withBrowser = async (fn, { extraArgs = [], viewport } = {}) => {
+  const browser = await launchBrowser(extraArgs);
+  try {
+    const page = await setupPage(browser, viewport);
+    return await fn(browser, page);
+  } finally {
+    await closeBrowser(browser);
+  }
+};
+
 const previewCache = new Map();
 
 export const previewWebsite = async (req, res) => {
-  let browser;
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ 
+    error: 'URL is required' 
+  });
+
   try {
-    const { url } = req.body;
-    
-    if (!url) {
-      return res.status(400).json({ error: 'URL is required' });
-    }
+    console.log('Interactive preview:', url);
 
-    console.log('🌐 Creating interactive preview:', url);
+    const html = await withBrowser(async (_browser, page) => {
+      await gotoPage(page, url);
+      await new Promise((r) => setTimeout(r, 2_000));
+      console.log('Website loaded');
 
-    browser = await puppeteer.launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      protocolTimeout: 120000
-    });
+      // Inline all the CSS of the website
+      await page.evaluate(() => {
+        const styles = [...document.querySelectorAll('style')].map((s) => s.textContent);
 
-    const page = await browser.newPage();
-    page.setDefaultTimeout(120000);
-
-    await page.setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    );
-
-    await page.setViewport({ width: 1600, height: 1200 });
-
-    await page.goto(url, {
-      waitUntil: 'networkidle2',
-      timeout: 60000
-    });
-
-    await new Promise(r => setTimeout(r, 2000));
-
-    console.log('✅ Website loaded');
-
-    // Inline CSS
-    await page.evaluate(() => {
-      const styles = [];
-      
-      document.querySelectorAll('style').forEach(style => {
-        styles.push(style.textContent);
-      });
-      
-      for (const sheet of document.styleSheets) {
-        try {
-          const rules = Array.from(sheet.cssRules || []);
-          const css = rules.map(rule => rule.cssText).join('\n');
-          if (css) styles.push(css);
-        } catch (e) {}
-      }
-      
-      document.querySelectorAll('link[rel="stylesheet"]').forEach(link => link.remove());
-      
-      const combinedStyle = document.createElement('style');
-      combinedStyle.textContent = styles.join('\n');
-      document.head.insertBefore(combinedStyle, document.head.firstChild);
-    });
-
-    // ADD BASE TAG - CRITICAL!
-    await page.evaluate((baseUrl) => {
-      // Remove existing base tags
-      document.querySelectorAll('base').forEach(b => b.remove());
-      
-      // Add new base tag
-      const base = document.createElement('base');
-      base.href = baseUrl;
-      document.head.insertBefore(base, document.head.firstChild);
-      
-      console.log('Base tag added:', baseUrl);
-    }, url);
-
-    // Fix absolute URLs for images
-    await page.evaluate((baseUrl) => {
-      document.querySelectorAll('img').forEach(img => {
-        if (img.src && !img.src.startsWith('data:')) {
-          img.src = new URL(img.src, baseUrl).href;
+        for (const sheet of document.styleSheets) {
+          try {
+            const css = [...(sheet.cssRules ?? [])].map((r) => r.cssText).join('\n');
+            if (css) styles.push(css);
+          } catch (_) {}
         }
+        // Remove link
+        document.querySelectorAll('link[rel="stylesheet"]').forEach((l) => l.remove());
+        // Add all in tag 'style'
+        const combined = document.createElement('style');
+        combined.textContent = styles.join('\n');
+        document.head.insertBefore(combined, document.head.firstChild);
       });
-      
-      document.querySelectorAll('[style*="background"]').forEach(el => {
-        const style = el.getAttribute('style') || '';
-        const fixed = style.replace(/url\(['"]?([^'")]+)['"]?\)/g, (match, url) => {
-          if (url.startsWith('data:')) return match;
-          return `url('${new URL(url, baseUrl).href}')`;
+
+      // Add <base> tag 
+      await page.evaluate((baseUrl) => {
+        document.querySelectorAll('base').forEach((b) => b.remove());
+        const base = document.createElement('base');
+        base.href = baseUrl;
+        document.head.insertBefore(base, document.head.firstChild);
+      }, url);
+
+      // Fix absolute url, remove scripts, disable links
+      await page.evaluate((baseUrl) => {
+        document.querySelectorAll('img').forEach((img) => {
+          if (img.src && !img.src.startsWith('data:'))
+            img.src = new URL(img.src, baseUrl).href;
         });
-        el.setAttribute('style', fixed);
-      });
-      
-      // REMOVE ALL SCRIPTS - Tránh errors
-      document.querySelectorAll('script').forEach(script => {
-        script.remove();
-        console.log('Removed script:', script.src || 'inline');
-      });
-      
-      // Disable links
-      document.querySelectorAll('a').forEach(a => {
-        a.href = 'javascript:void(0)';
-      });
-    }, url);
 
-    // INJECT BLOCKER CSS
-    await page.evaluate(() => {
-      const blockerStyle = document.createElement('style');
-      blockerStyle.id = 'BLOCKER_STYLES_INJECTED';
-      blockerStyle.textContent = `
-        .iframe-hover-highlight {
-          outline: 5px solid #ff0000 !important;
-          outline-offset: 2px !important;
-          cursor: pointer !important;
-          background: rgba(255, 0, 0, 0.2) !important;
-          z-index: 999999 !important;
-        }
-        .iframe-blocked {
-          display: none !important;
-        }
-      `;
-      document.head.appendChild(blockerStyle);
-      console.log('Blocker styles injected');
+        document.querySelectorAll('[style*="background"]').forEach((el) => {
+          el.setAttribute(
+            'style',
+            (el.getAttribute('style') ?? '').replace(
+              /url\(['"]?([^'")]+)['"]?\)/g,
+              (match, u) => (u.startsWith('data:') ? match : `url('${new URL(u, baseUrl).href}')`)
+            )
+          );
+        });
+
+        document.querySelectorAll('script').forEach((s) => s.remove());
+        document.querySelectorAll('a').forEach((a) => (a.href = 'javascript:void(0)'));
+      }, url);
+
+      // Inject interaction-highlight styles
+      await page.evaluate(() => {
+        const style = document.createElement('style');
+        style.id = 'BLOCKER_STYLES_INJECTED';
+        style.textContent = `
+          .iframe-hover-highlight {
+            outline: 5px solid #ff0000 !important;
+            outline-offset: 2px !important;
+            cursor: pointer !important;
+            background: rgba(255, 0, 0, 0.2) !important;
+            z-index: 999999 !important;
+          }
+          .iframe-blocked { display: none !important; }
+        `;
+        document.head.appendChild(style);
+      });
+
+      return page.content();
     });
-
-    const html = await page.content();
-    await browser.close();
 
     const previewId = Math.random().toString(36).substring(7);
     previewCache.set(previewId, html);
-    setTimeout(() => previewCache.delete(previewId), 10 * 60 * 1000);
+    setTimeout(() => previewCache.delete(previewId), 10 * 60_000);
 
-    console.log('✅ Preview cached:', previewId);
-
+    console.log('Preview cached:', previewId);
     res.json({ previewId });
-
   } catch (error) {
-    if (browser) await browser.close();
-    console.error('❌ Preview error:', error.message);
+    console.error('Preview error:', error.message);
     res.status(500).json({ error: 'Preview failed', message: error.message });
   }
 };
+
+// Get HTML from cache
 export const getPreview = (req, res) => {
-  const { id } = req.params;
-  const html = previewCache.get(id);
-  
-  if (!html) {
-    return res.status(404).send('Preview not found or expired');
-  }
-  
+  const html = previewCache.get(req.params.id);
+  if (!html) return res.status(404).send('Preview not found or expired');
+
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.setHeader('Access-Control-Allow-Origin', 'http://localhost:5173'); // ← QUAN TRỌNG
+  res.setHeader('Access-Control-Allow-Origin', process.env.CLIENT_URL);
   res.setHeader('Access-Control-Allow-Methods', 'GET');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.send(html);
 };
-// CONTROLLER 2: Convert URL to PDF
+
 export const urlToPdf = async (req, res) => {
-  let browser;
+  const { url, options = {}, blockedSelectors = [] } = req.body;
+  if (!url) return res.status(400).json({ error: 'URL is required' });
+
+  const filename = options.filename || createFilename(url);
+  console.log('Converting:', url);
+  console.log('Blocked selectors:', blockedSelectors);
+
   try {
-    const { url, options = {} } = req.body;
-    
-    if (!url) {
-      return res.status(400).json({ error: 'URL is required' });
-    }
+    const pdfBuffer = await withBrowser(
+      async (_browser, page) => {
+        // Spoof automation flags
+        await page.evaluateOnNewDocument(() => {
+          Object.defineProperty(navigator, 'webdriver', { get: () => false });
+          window.navigator.chrome = { runtime: {}, app: {} };
+          Object.defineProperty(navigator, 'plugins', {
+            get: () => [{ name: 'Chrome PDF Plugin' }],
+          });
+        });
 
-    const filename = options.filename || createFilename(url);
-    console.log('Converting:', url);
+        await page.setExtraHTTPHeaders({
+          'Accept-Language': 'en-US,en;q=0.9',
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        });
 
-    browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-blink-features=AutomationControlled',
-        '--disable-dev-shm-usage'
-      ],
-      protocolTimeout: 120000
-    });
+        console.log('📡 Loading page...');
+        await gotoPage(page, url);
+        console.log('Page loaded');
 
-    const page = await browser.newPage();
-    page.setDefaultTimeout(120000);
-    page.setDefaultNavigationTimeout(120000);
+        if (options.acceptCookies !== false) await acceptCookies(page);
 
-    await page.setUserAgent(
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    );
-
-    await page.setViewport({
-      width: 1600,
-      height: 1200
-    });
-
-    await page.setExtraHTTPHeaders({
-      'Accept-Language': 'en-US,en;q=0.9',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
-    });
-
-    await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, 'webdriver', { get: () => false });
-      window.navigator.chrome = { runtime: {}, app: {} };
-      Object.defineProperty(navigator, 'plugins', { 
-        get: () => [{ name: 'Chrome PDF Plugin' }] 
-      });
-    });
-
-    console.log('📡 Loading page...');
-    
-    await page.goto(url, {
-      waitUntil: 'networkidle2',
-      timeout: 60000
-    });
-
-    console.log('✅ Page loaded');
-
-    // Accept cookies
-    if (options.acceptCookies !== false) {
-      await acceptCookies(page);
-    }
-
-    // Keep content only (with custom selector)
-    if (options.keepContentOnly) {
-      console.log('📝 Isolating main content block...');
-      
-      try {
-        const customSelector = options.contentSelector;
-        
-        await page.evaluate((selector) => {
-          let contentBlock = null;
-          
-          if (selector) {
-            // User provided selector
-            contentBlock = document.querySelector(selector);
-            console.log('Using custom selector:', selector);
-          } else {
-            // Fallback: auto-detect
-            const mainSelectors = [
-              'main',
-              'article',
-              '[role="main"]',
-              '#main',
-              '#content',
-              '.content',
-              '.main-content',
-              '.post-content',
-              '.article-content',
-              '.entry-content'
-            ];
-            
-            for (const sel of mainSelectors) {
-              const el = document.querySelector(sel);
-              if (el) {
-                contentBlock = el;
-                console.log('Auto-detected:', sel);
-                break;
-              }
-            }
-          }
-          
-          if (contentBlock) {
-            // Create Set of elements to keep
-            const keepElements = new Set();
-            
-            // Keep content block + all children
-            keepElements.add(contentBlock);
-            contentBlock.querySelectorAll('*').forEach(el => keepElements.add(el));
-            
-            // Keep parent chain
-            let current = contentBlock.parentElement;
-            while (current) {
-              keepElements.add(current);
-              current = current.parentElement;
-            }
-            
-            // Hide everything else
-            document.querySelectorAll('*').forEach(el => {
-              if (!keepElements.has(el)) {
-                el.style.setProperty('display', 'none', 'important');
+        // Hide blocked elements
+        if (blockedSelectors.length > 0) {
+          console.log(`Hiding ${blockedSelectors.length} blocked elements`);
+          await page.evaluate((selectors) => {
+            selectors.forEach((selector) => {
+              try {
+                const els = document.querySelectorAll(selector);
+                els.forEach((el) => el.style.setProperty('display', 'none', 'important'));
+                console.log(`Hidden: ${selector} (${els.length} elements)`);
+              } catch (err) {
+                console.error(`Failed to hide: ${selector}`, err);
               }
             });
-            
-            // Clean body styling
-            document.body.style.margin = '0';
-            document.body.style.padding = '20px';
-            
-            console.log('Content isolated successfully');
-          } else {
-            console.warn('Content block not found');
-          }
-          
-        }, customSelector);
-        
-        await new Promise(r => setTimeout(r, 500));
-        console.log('✅ Main content isolated');
-        
-      } catch (error) {
-        console.error('❌ Error isolating content:', error.message);
-        console.log('ℹ️ Continuing with full page');
-      }
-    }
+          }, blockedSelectors);
+          await new Promise((r) => setTimeout(r, 500));
+          console.log('Blocked elements hidden');
+        }
 
-    // Inject custom CSS (if not using keepContentOnly)
-    if (!options.keepContentOnly) {
-      const customCSS = buildCSS(options);
-      if (customCSS) {
-        await page.addStyleTag({ content: customCSS });
-        await new Promise(r => setTimeout(r, 1000));
-        console.log('💉 CSS injected');
-      }
-    }
+        // Inject custom CSS
+        const customCSS = buildCSS(options);
+        if (customCSS) {
+          await page.addStyleTag({ content: customCSS });
+          await new Promise((r) => setTimeout(r, 1_000));
+          console.log('CSS injected');
+        }
 
-    const pageTitle = await page.title();
-    const currentDate = new Date().toLocaleDateString();
+        const pageTitle = await page.title();
+        const currentDate = new Date().toLocaleDateString();
 
-    console.log('📄 Generating PDF...');
-
-    const pdfBuffer = await page.pdf({
-      format: options.format || 'A4',
-      printBackground: options.printBackground !== false,
-      landscape: options.landscape || false,
-      scale: options.scale || 1.0,
-      margin: {
-        top: options.marginTop || '80px',
-        right: options.marginRight || '40px',
-        bottom: options.marginBottom || '80px',
-        left: options.marginLeft || '40px'
+        console.log('Generating PDF');
+        return page.pdf({
+          format: options.format || 'A4',
+          printBackground: options.printBackground !== false,
+          landscape: options.landscape || false,
+          scale: options.scale || 1.0,
+          margin: {
+            top: options.marginTop || '80px',
+            right: options.marginRight || '40px',
+            bottom: options.marginBottom || '80px',
+            left: options.marginLeft || '40px',
+          },
+          displayHeaderFooter: options.displayHeaderFooter !== false,
+          headerTemplate: `<div style="width:100%;font-size:9px;padding:5px 40px;color:#666">${pageTitle}</div>`,
+          footerTemplate: `<div style="width:100%;font-size:9px;padding:5px 40px;color:#666;text-align:center">Page <span class="pageNumber"></span> - ${currentDate}</div>`,
+        });
       },
-      displayHeaderFooter: options.displayHeaderFooter !== false,
-      headerTemplate: `<div style="width: 100%; font-size: 9px; padding: 5px 40px; color: #666;">${pageTitle}</div>`,
-      footerTemplate: `<div style="width: 100%; font-size: 9px; padding: 5px 40px; color: #666; text-align: center;">Page <span class="pageNumber"></span> - ${currentDate}</div>`
-    });
+      {
+        extraArgs: [
+          '--disable-blink-features=AutomationControlled',
+          '--disable-dev-shm-usage',
+        ],
+      }
+    );
 
-    await browser.close();
-    console.log('✅ PDF generated successfully');
-
+    console.log('PDF generated successfully');
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
     res.send(pdfBuffer);
-
   } catch (error) {
-    if (browser) await browser.close();
-    console.error('❌ Error:', error.message);
-    res.status(500).json({
-      error: 'Conversion failed',
-      message: error.message
-    });
+    console.error('Error:', error.message);
+    res.status(500).json({ error: 'Conversion failed', message: error.message });
   }
 };
 
