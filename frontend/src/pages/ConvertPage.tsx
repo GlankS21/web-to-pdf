@@ -674,8 +674,8 @@ const ConvertPage: React.FC = () => {
       <div className="root">
         {/* Header */}
         <header className="header">
-          <span className="header-logo">⬛ PDF.FORGE</span>
-          <span className="header-badge">v2.0 · URL → PDF</span>
+          <span className="header-logo">CONVERT WEBPAGE TO PDF</span>
+          <span className="header-badge">URL → PDF</span>
         </header>
 
         <div className="layout">
@@ -939,7 +939,6 @@ const ConvertPage: React.FC = () => {
                 <iframe src={pdfPreview} className="preview-iframe" title="PDF Preview" />
               ) : (
                 <div className="empty-main">
-                  <div className="empty-main-icon">⬛</div>
                   <div className="empty-main-title">Nothing loaded</div>
                   <div className="empty-main-sub">Enter a URL and press Preview</div>
                 </div>
