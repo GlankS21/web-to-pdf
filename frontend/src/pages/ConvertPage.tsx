@@ -49,23 +49,23 @@ const ConvertPage: React.FC = () => {
   // doc: the iframe's document — needed to correctly detect root boundary
   const generateSelector = (el: HTMLElement, doc: Document): string => {
     const parts: string[] = []
-    let current: HTMLElement | null = el
+    let node: HTMLElement | null = el
 
-    while (current && current !== doc.body && current !== doc.documentElement) {
+    while (node !== null && node !== doc.body && node !== doc.documentElement) {
       // id is unique — stop here
-      if (current.id) {
-        parts.unshift('#' + CSS.escape(current.id))
+      if (node.id) {
+        parts.unshift('#' + CSS.escape(node.id))
         break
       }
 
-      const parent: HTMLElement | null = current.parentElement
-      if (!parent) break
+      const par = node.parentElement as HTMLElement | null
+      if (!par) break
 
       // Pure positional selector — immune to class name collisions
-      const index = Array.from(parent.children).indexOf(current) + 1
-      parts.unshift(`${current.tagName.toLowerCase()}:nth-child(${index})`)
+      const index = Array.from(par.children).indexOf(node) + 1
+      parts.unshift(`${node.tagName.toLowerCase()}:nth-child(${index})`)
 
-      current = parent
+      node = par
     }
 
     return parts.join(' > ')
