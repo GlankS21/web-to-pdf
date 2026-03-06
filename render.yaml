@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: convert webpage
+    env: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: CLIENT_URL
+        value: https://your-frontend.vercel.app
+envVars:
+  - key: PUPPETEER_SKIP_CHROMIUM_DOWNLOAD
+    value: false

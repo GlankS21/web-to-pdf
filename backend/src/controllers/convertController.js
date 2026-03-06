@@ -24,8 +24,15 @@ const DEFAULT_USER_AGENT =
 // Launch a Puppeteer browser 
 const launchBrowser = (extraArgs = []) => puppeteer.launch({
   headless: true,
-  args: ['--no-sandbox', '--disable-setuid-sandbox', ...extraArgs],
-  protocolTimeout: 45_000,
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',      
+    '--disable-gpu', 
+    '--single-process',
+    ...extraArgs,
+  ],
+  executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
 });
 
 //  Configure a new page (timeout, user-agent, viewport)
@@ -62,7 +69,6 @@ const toUrlPattern = (rawUrl) => {
   const { hostname, pathname } = new URL(rawUrl);
   const segments = pathname.replace(/\/$/, '').split('/');
 
-  // Nếu segment cuối trông như ID (số, hoặc chuỗi dài > 8 ký tự) → thay bằng *
   const lastSegment = segments[segments.length - 1];
   const looksLikeId = /^\d+$/.test(lastSegment) || lastSegment.length > 8;
   if (looksLikeId) segments[segments.length - 1] = '*';
@@ -92,14 +98,6 @@ const previewCache = new Map();
 
 const selectorMemory = new Map();
 
-// ─────────────────────────────────────────────
-// Header / Footer Memory
-// ─────────────────────────────────────────────
-
-/**
- * Lưu header/footer config theo: sessionId → urlPattern → config
- * config = { headerText, footerText, logoBase64, logoMime }
- */
 const headerFooterMemory = new Map();
 
 const saveHeaderFooter = (sessionId, url, config) => {
@@ -116,10 +114,7 @@ const getSavedHeaderFooter = (sessionId, url) => {
   return headerFooterMemory.get(sessionId)?.get(pattern) ?? null;
 };
 
-/**
- * Build HTML string cho header hoặc footer dùng trong page.pdf()
- * Puppeteer yêu cầu inline style, không dùng được class ngoài
- */
+
 const buildHeaderTemplate = ({ headerText, logoBase64, logoMime } = {}) => {
   const logo = logoBase64
     ? `<img src="data:${logoMime};base64,${logoBase64}" style="height:28px;object-fit:contain;margin-right:8px;" />`
@@ -190,21 +185,18 @@ export const previewWebsite = async (req, res) => {
 
       // Fix absolute url, remove scripts, disable links
       await page.evaluate((baseUrl) => {
-        document.querySelectorAll('img').forEach((img) => {
+         document.querySelectorAll('img').forEach((img) => {
           if (img.src && !img.src.startsWith('data:'))
             img.src = new URL(img.src, baseUrl).href;
         });
 
-        document.querySelectorAll('[style*="background"]').forEach((el) => {
-          el.setAttribute(
-            'style',
-            (el.getAttribute('style') ?? '').replace(
-              /url\(['"]?([^'")]+)['"]?\)/g,
-              (match, u) => (u.startsWith('data:') ? match : `url('${new URL(u, baseUrl).href}')`)
+        document.querySelectorAll('[style*="background"]').forEach((el) => { el.setAttribute(
+            'style', (el.getAttribute('style') ?? '').replace(
+              /url\(['"]?([^'")]+)['"]?\)/g, (match, u) => (u.startsWith('data:') ? match : `url('${new URL(u, baseUrl).href}')`)
             )
           );
-        });
-
+        }); 
+        
         document.querySelectorAll('script').forEach((s) => s.remove());
         document.querySelectorAll('a').forEach((a) => (a.href = 'javascript:void(0)'));
       }, url);
@@ -215,8 +207,8 @@ export const previewWebsite = async (req, res) => {
         style.id = 'BLOCKER_STYLES_INJECTED';
         style.textContent = `
           .iframe-hover-highlight {
-            outline: 5px solid #ff0000 !important;
-            outline-offset: 2px !important;
+            outline: 2px solid #ff0000 !important;
+            outline-offset: 1px !important;
             cursor: pointer !important;
             background: rgba(255, 0, 0, 0.2) !important;
             z-index: 999999 !important;
@@ -253,7 +245,6 @@ export const getPreview = (req, res) => {
   res.send(html);
 };
 
-// GET /header-footer/suggest?url=...
 export const getSuggestedHeaderFooter = (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).json({ error: 'url query param is required' });
@@ -300,7 +291,7 @@ export const urlToPdf = async (req, res) => {
   console.log('Converting:', url);
   console.log('Blocked selectors:', blockedSelectors);
 
-  // Header/footer config — từ request hoặc từ memory nếu không gửi lên
+  // Header/footer config
   const { headerFooter } = req.body;
   const savedHf = getSavedHeaderFooter(sessionId, url);
   const hfConfig = headerFooter ?? savedHf;
@@ -323,7 +314,7 @@ export const urlToPdf = async (req, res) => {
           Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         });
 
-        console.log('📡 Loading page...');
+        console.log('Loading page');
         await gotoPage(page, url);
         console.log('Page loaded');
 
@@ -345,9 +336,6 @@ export const urlToPdf = async (req, res) => {
           }, blockedSelectors);
           await new Promise((r) => setTimeout(r, 500));
           console.log('Blocked elements hidden');
-
-          // Wait for browser to finish reflow after hiding many elements —
-          // rAF x2 ensures the browser has painted before we generate the PDF
           await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
           await new Promise((r) => setTimeout(r, 800));
         }
@@ -363,7 +351,6 @@ export const urlToPdf = async (req, res) => {
         const pageTitle = await page.title();
         const currentDate = new Date().toLocaleDateString();
 
-        // hfConfig từ closure — có thể là từ request hoặc từ memory
         console.log('Generating PDF');
         return page.pdf({
           format: options.format || 'A4',

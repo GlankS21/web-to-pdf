@@ -5,7 +5,11 @@
   "main": "src/server.js",
   "scripts": {
     "dev": "nodemon src/server.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "build": "npx puppeteer browsers install chrome"
+  },
+  "engines": {
+    "node": "20.x"
   },
   "type": "module",
   "keywords": [],
