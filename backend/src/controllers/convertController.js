@@ -92,6 +92,62 @@ const previewCache = new Map();
 
 const selectorMemory = new Map();
 
+// ─────────────────────────────────────────────
+// Header / Footer Memory
+// ─────────────────────────────────────────────
+
+/**
+ * Lưu header/footer config theo: sessionId → urlPattern → config
+ * config = { headerText, footerText, logoBase64, logoMime }
+ */
+const headerFooterMemory = new Map();
+
+const saveHeaderFooter = (sessionId, url, config) => {
+  if (!sessionId) return;
+  const pattern = toUrlPattern(url);
+  if (!headerFooterMemory.has(sessionId)) headerFooterMemory.set(sessionId, new Map());
+  headerFooterMemory.get(sessionId).set(pattern, config);
+  console.log(`Saved header/footer for [${sessionId}] → ${pattern}`);
+};
+
+const getSavedHeaderFooter = (sessionId, url) => {
+  if (!sessionId) return null;
+  const pattern = toUrlPattern(url);
+  return headerFooterMemory.get(sessionId)?.get(pattern) ?? null;
+};
+
+/**
+ * Build HTML string cho header hoặc footer dùng trong page.pdf()
+ * Puppeteer yêu cầu inline style, không dùng được class ngoài
+ */
+const buildHeaderTemplate = ({ headerText, logoBase64, logoMime } = {}) => {
+  const logo = logoBase64
+    ? `<img src="data:${logoMime};base64,${logoBase64}" style="height:28px;object-fit:contain;margin-right:8px;" />`
+    : '';
+  const text = headerText
+    ? `<span style="font-size:9px;color:#444;">${headerText}</span>`
+    : '';
+
+  if (!logo && !text) return '<span></span>';
+
+  return `
+    <div style="width:100%;display:flex;align-items:center;padding:4px 40px;border-bottom:1px solid #ddd;">
+      ${logo}${text}
+    </div>`;
+};
+
+const buildFooterTemplate = ({ footerText } = {}, currentDate) => {
+  const left = footerText
+    ? `<span style="font-size:9px;color:#666;">${footerText}</span>`
+    : `<span style="font-size:9px;color:#666;">${currentDate}</span>`;
+
+  return `
+    <div style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:4px 40px;">
+      ${left}
+      <span style="font-size:9px;color:#666;">Page <span class="pageNumber"></span></span>
+    </div>`;
+};
+
 export const previewWebsite = async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ 
@@ -197,6 +253,19 @@ export const getPreview = (req, res) => {
   res.send(html);
 };
 
+// GET /header-footer/suggest?url=...
+export const getSuggestedHeaderFooter = (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.status(400).json({ error: 'url query param is required' });
+
+  const sessionId = req.cookies?.sessionId;
+  const config = getSavedHeaderFooter(sessionId, url);
+  const pattern = toUrlPattern(url);
+
+  console.log(`Suggest header/footer [${sessionId}] → ${pattern}`);
+  res.json({ config, pattern });
+};
+
 export const getSuggestedSelectors = (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).json({ error: 'url query param is required' });
@@ -230,6 +299,12 @@ export const urlToPdf = async (req, res) => {
   const filename = options.filename || createFilename(url);
   console.log('Converting:', url);
   console.log('Blocked selectors:', blockedSelectors);
+
+  // Header/footer config — từ request hoặc từ memory nếu không gửi lên
+  const { headerFooter } = req.body;
+  const savedHf = getSavedHeaderFooter(sessionId, url);
+  const hfConfig = headerFooter ?? savedHf;
+  if (hfConfig) saveHeaderFooter(sessionId, url, hfConfig);
 
   try {
     const pdfBuffer = await withBrowser(
@@ -288,6 +363,7 @@ export const urlToPdf = async (req, res) => {
         const pageTitle = await page.title();
         const currentDate = new Date().toLocaleDateString();
 
+        // hfConfig từ closure — có thể là từ request hoặc từ memory
         console.log('Generating PDF');
         return page.pdf({
           format: options.format || 'A4',
@@ -301,8 +377,8 @@ export const urlToPdf = async (req, res) => {
             left: options.marginLeft || '40px',
           },
           displayHeaderFooter: options.displayHeaderFooter !== false,
-          headerTemplate: `<div style="width:100%;font-size:9px;padding:5px 40px;color:#666">${pageTitle}</div>`,
-          footerTemplate: `<div style="width:100%;font-size:9px;padding:5px 40px;color:#666;text-align:center">Page <span class="pageNumber"></span> - ${currentDate}</div>`,
+          headerTemplate: buildHeaderTemplate(hfConfig ?? { headerText: pageTitle }),
+          footerTemplate: buildFooterTemplate(hfConfig ?? {}, currentDate),
         });
       },
       {
@@ -354,7 +430,7 @@ const buildCSS = (options) => {
   let css = '';
   const cssFiles = [
     { condition: options.removeHeader, file: 'remove-header.css' },
-    { condition: options.removeFooter, file: 'remove-footer.css' }
+    { condition: options.removeFooter, file: 'remove-footer.css' },
   ];
 
   cssFiles.forEach(({ condition, file }) => {

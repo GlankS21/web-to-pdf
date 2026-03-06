@@ -16,6 +16,13 @@ const ConvertPage: React.FC = () => {
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
+  const [headerFooter, setHeaderFooter] = useState({
+    headerText: '',
+    footerText: '',
+    logoBase64: '',
+    logoMime: '',
+  })
+
   const [options, setOptions] = useState({
     filename: '',
     format: 'A4',
@@ -73,6 +80,15 @@ const ConvertPage: React.FC = () => {
         withCredentials: true,
       })
       if (data.selectors?.length) setSuggestedSelectors(data.selectors)
+    } catch {}
+
+    // Load saved header/footer config for this URL pattern
+    try {
+      const { data } = await axios.get(`${API}/header-footer/suggest`, {
+        params: { url: inputUrl },
+        withCredentials: true,
+      })
+      if (data.config) setHeaderFooter(data.config)
     } catch {}
   }, [])
 
@@ -158,7 +174,7 @@ const ConvertPage: React.FC = () => {
     try {
       const response = await axios.post(
         `${API}/url-to-pdf`,
-        { url, options: { ...options, customCSS }, blockedSelectors },
+        { url, options: { ...options, customCSS }, blockedSelectors, headerFooter },
         { responseType: 'blob', withCredentials: true }
       )
       const blob = new Blob([response.data], { type: 'application/pdf' })
@@ -192,6 +208,21 @@ const ConvertPage: React.FC = () => {
   }
 
   const opt = (key: keyof typeof options, val: any) => setOptions(prev => ({ ...prev, [key]: val }))
+
+  /* ── Logo upload ── */
+  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result as string
+      // result = "data:image/png;base64,XXXX"
+      const [meta, base64] = result.split(',')
+      const mime = meta.replace('data:', '').replace(';base64', '')
+      setHeaderFooter(prev => ({ ...prev, logoBase64: base64, logoMime: mime }))
+    }
+    reader.readAsDataURL(file)
+  }
 
   /* ── UI ── */
   return (
@@ -803,6 +834,61 @@ const ConvertPage: React.FC = () => {
                   <div className="opt-row">
                     <span className="opt-label">Remove Footer</span>
                     <button className={`opt-toggle ${options.removeFooter ? 'on' : ''}`} onClick={() => opt('removeFooter', !options.removeFooter)} />
+                  </div>
+                </div>
+
+                <div className="opt-group">
+                  <div className="opt-group-label">Header / Footer</div>
+
+                  <div className="opt-row">
+                    <span className="opt-label">Header text</span>
+                    <input
+                      className="opt-input"
+                      value={headerFooter.headerText}
+                      onChange={e => setHeaderFooter(prev => ({ ...prev, headerText: e.target.value }))}
+                      placeholder="Company name..."
+                    />
+                  </div>
+
+                  <div className="opt-row">
+                    <span className="opt-label">Footer text</span>
+                    <input
+                      className="opt-input"
+                      value={headerFooter.footerText}
+                      onChange={e => setHeaderFooter(prev => ({ ...prev, footerText: e.target.value }))}
+                      placeholder="Confidential..."
+                    />
+                  </div>
+
+                  <div className="opt-row">
+                    <span className="opt-label">Logo</span>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                      {headerFooter.logoBase64 && (
+                        <img
+                          src={`data:${headerFooter.logoMime};base64,${headerFooter.logoBase64}`}
+                          style={{ height: 24, objectFit: 'contain', borderRadius: 2 }}
+                        />
+                      )}
+                      <label style={{ cursor: 'pointer' }}>
+                        <span className="btn-sm" style={{ pointerEvents: 'none' }}>
+                          {headerFooter.logoBase64 ? '↺ Change' : '↑ Upload'}
+                        </span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          style={{ display: 'none' }}
+                          onChange={handleLogoUpload}
+                        />
+                      </label>
+                      {headerFooter.logoBase64 && (
+                        <button
+                          className="btn-sm"
+                          onClick={() => setHeaderFooter(prev => ({ ...prev, logoBase64: '', logoMime: '' }))}
+                        >
+                          × Remove
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
