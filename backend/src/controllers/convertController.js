@@ -27,9 +27,6 @@ const launchBrowser = (extraArgs = []) => puppeteer.launch({
   args: [
     '--no-sandbox',
     '--disable-setuid-sandbox',
-    '--disable-dev-shm-usage',      
-    '--disable-gpu', 
-    '--single-process',
     ...extraArgs,
   ],
   executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
