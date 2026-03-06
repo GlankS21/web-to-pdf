@@ -16,7 +16,13 @@ const ConvertPage: React.FC = () => {
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
-  const [headerFooter, setHeaderFooter] = useState({
+  interface HeaderFooterConfig {
+    headerText: string
+    footerText: string
+    logoBase64: string
+    logoMime: string
+  }
+  const [headerFooter, setHeaderFooter] = useState<HeaderFooterConfig>({
     headerText: '',
     footerText: '',
     logoBase64: '',
@@ -125,6 +131,7 @@ const ConvertPage: React.FC = () => {
         e.stopPropagation()
         const t = e.target as HTMLElement
         // Pass iframe's doc so the while-loop stops at the correct root
+        if (!doc) return
         let sel = generateSelector(t, doc)
         setBlockedSelectors(prev => [...new Set([...prev, sel])])
         t.classList.remove('iframe-hover-highlight')
@@ -207,7 +214,7 @@ const ConvertPage: React.FC = () => {
     showToast(`Applied ${suggestedSelectors.length} saved selectors`)
   }
 
-  const opt = (key: keyof typeof options, val: any) => setOptions(prev => ({ ...prev, [key]: val }))
+  const opt = (key: keyof typeof options, val: unknown) => setOptions(prev => ({ ...prev, [key]: val as never }))
 
   /* ── Logo upload ── */
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
