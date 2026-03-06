@@ -58,7 +58,7 @@ const ConvertPage: React.FC = () => {
         break
       }
 
-      const parent = current.parentElement
+      const parent: HTMLElement | null = current.parentElement
       if (!parent) break
 
       // Pure positional selector — immune to class name collisions
