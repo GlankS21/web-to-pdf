@@ -1,15 +1,18 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import axios from 'axios'
+
+const API = 'http://localhost:5001/api/convert'
 
 const ConvertPage: React.FC = () => {
   const [url, setUrl] = useState('')
-  const [loading, setLoading] = useState(false)
-
+  const [loading, setLoading] = useState<'preview' | 'pdf' | null>(null)
   const [pdfPreview, setPdfPreview] = useState<string | null>(null)
   const [previewHtml, setPreviewHtml] = useState<string | null>(null)
-
   const [blockedSelectors, setBlockedSelectors] = useState<string[]>([])
   const [isBlockMode, setIsBlockMode] = useState(false)
+  const [suggestedSelectors, setSuggestedSelectors] = useState<string[]>([])
+  const [activeTab, setActiveTab] = useState<'page' | 'options'>('page')
+  const [toast, setToast] = useState<{ msg: string; type: 'ok' | 'err' } | null>(null)
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
@@ -24,312 +27,837 @@ const ConvertPage: React.FC = () => {
     marginBottom: '80px',
     marginLeft: '40px',
     displayHeaderFooter: true,
-    customCSS: '',
     acceptCookies: true,
     removeHeader: false,
-    removeFooter: false
+    removeFooter: false,
   })
 
-  /* ==============================
-     Generate CSS selector
-  ============================== */
-
-  const generateSelector = (el: HTMLElement): string => {
-    if (el.id) return '#' + CSS.escape(el.id)
-
-    if (el.className && typeof el.className === 'string') {
-      const classes = el.className.trim().split(/\s+/).filter(Boolean)
-      if (classes.length) {
-        return '.' + classes.map(c => CSS.escape(c)).join('.')
-      }
-    }
-
-    const parent = el.parentElement
-    if (parent) {
-      const siblings = Array.from(parent.children).filter(
-        c => c.tagName === el.tagName
-      )
-      if (siblings.length > 1) {
-        const index = siblings.indexOf(el) + 1
-        return `${el.tagName.toLowerCase()}:nth-of-type(${index})`
-      }
-    }
-
-    return el.tagName.toLowerCase()
+  /* ── Toast ── */
+  const showToast = (msg: string, type: 'ok' | 'err' = 'ok') => {
+    setToast({ msg, type })
+    setTimeout(() => setToast(null), 3000)
   }
 
-  /* ==============================
-     IFRAME BLOCK MODE FIXED
-  ============================== */
+  /* ── Selector generator ── */
+  // doc: the iframe's document — needed to correctly detect root boundary
+  const generateSelector = (el: HTMLElement, doc: Document): string => {
+    const parts: string[] = []
+    let current: HTMLElement | null = el
 
+    while (current && current !== doc.body && current !== doc.documentElement) {
+      // id is unique — stop here
+      if (current.id) {
+        parts.unshift('#' + CSS.escape(current.id))
+        break
+      }
+
+      const parent = current.parentElement
+      if (!parent) break
+
+      // Pure positional selector — immune to class name collisions
+      const index = Array.from(parent.children).indexOf(current) + 1
+      parts.unshift(`${current.tagName.toLowerCase()}:nth-child(${index})`)
+
+      current = parent
+    }
+
+    return parts.join(' > ')
+  }
+
+  /* ── Fetch suggested selectors ── */
+  const fetchSuggestions = useCallback(async (inputUrl: string) => {
+    if (!inputUrl.startsWith('http')) return
+    try {
+      const { data } = await axios.get(`${API}/selectors/suggest`, {
+        params: { url: inputUrl },
+        withCredentials: true,
+      })
+      if (data.selectors?.length) setSuggestedSelectors(data.selectors)
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    const t = setTimeout(() => fetchSuggestions(url), 600)
+    return () => clearTimeout(t)
+  }, [url, fetchSuggestions])
+
+  /* ── Sync blockedSelectors → customCSS ── */
+  useEffect(() => {
+    if (!blockedSelectors.length) return
+    // customCSS is derived, no extra state needed — sent as-is on PDF call
+  }, [blockedSelectors])
+
+  /* ── Block mode listeners ── */
   useEffect(() => {
     const iframe = iframeRef.current
     if (!iframe || !previewHtml) return
 
-    let iframeDoc: Document | null = null
+    const setup = () => {
+      const doc = iframe.contentDocument
+      if (!doc) return
 
-    const setupListeners = () => {
-      iframeDoc = iframe.contentDocument
-      if (!iframeDoc) {
-        console.log('Cannot access iframe document')
-        return
+      const onMove = (e: MouseEvent) => {
+        if (!isBlockMode) return
+        const t = e.target as HTMLElement
+        doc.querySelectorAll('.iframe-hover-highlight').forEach(el => el.classList.remove('iframe-hover-highlight'))
+        if (t !== doc.body && t !== doc.documentElement) t.classList.add('iframe-hover-highlight')
       }
 
-      const handleMouseMove = (e: MouseEvent) => {
+      const onClick = (e: MouseEvent) => {
         if (!isBlockMode) return
-
-        const target = e.target as HTMLElement
-        if (!target) return
-
-        iframeDoc!
-          .querySelectorAll('.iframe-hover-highlight')
-          .forEach(el => el.classList.remove('iframe-hover-highlight'))
-
-        if (
-          target !== iframeDoc!.body &&
-          target !== iframeDoc!.documentElement
-        ) {
-          target.classList.add('iframe-hover-highlight')
-        }
-      }
-
-      const handleClick = (e: MouseEvent) => {
-        if (!isBlockMode) return
-
         e.preventDefault()
         e.stopPropagation()
-
-        const target = e.target as HTMLElement
-        if (!target) return
-
-        let selector = generateSelector(target)
-
-        selector = selector
-          .replace(/\.iframe-hover-highlight/g, '')
-          .replace(/\.iframe-blocked/g, '')
-          .trim()
-        
-        console.log('Clean selector:', selector) 
-
-        setBlockedSelectors(prev => [...prev, selector])
-
-        target.classList.remove('iframe-hover-highlight')
-        target.classList.add('iframe-blocked')
+        const t = e.target as HTMLElement
+        // Pass iframe's doc so the while-loop stops at the correct root
+        let sel = generateSelector(t, doc)
+        setBlockedSelectors(prev => [...new Set([...prev, sel])])
+        t.classList.remove('iframe-hover-highlight')
+        t.classList.add('iframe-blocked')
       }
 
-      iframeDoc.addEventListener('mousemove', handleMouseMove)
-      iframeDoc.addEventListener('click', handleClick, true)
-
-      // Cleanup
+      doc.addEventListener('mousemove', onMove)
+      doc.addEventListener('click', onClick, true)
       return () => {
-        iframeDoc?.removeEventListener('mousemove', handleMouseMove)
-        iframeDoc?.removeEventListener('click', handleClick, true)
+        doc.removeEventListener('mousemove', onMove)
+        doc.removeEventListener('click', onClick, true)
       }
     }
 
-    if (iframe.contentDocument?.readyState === 'complete') {
-      return setupListeners()
-    } else {
-      iframe.onload = setupListeners
-    }
+    if (iframe.contentDocument?.readyState === 'complete') return setup()
+    else { iframe.onload = setup }
   }, [previewHtml, isBlockMode])
 
-  /* ==============================
-     Sync blockedSelectors → customCSS
-  ============================== */
-
-  useEffect(() => {
-    if (blockedSelectors.length === 0) {
-      setOptions(prev => ({ ...prev, customCSS: '' }))
-      return
-    }
-
-    const css = blockedSelectors
-      .map(s => `${s} { display: none !important; }`)
-      .join('\n')
-
-    setOptions(prev => ({ ...prev, customCSS: css }))
-  }, [blockedSelectors])
-
-  /* ==============================
-     LOAD PREVIEW
-  ============================== */
-
+  /* ── Load Preview ── */
   const handleLoadPreview = async () => {
-    if (!url) return alert('Enter URL')
-
-    setLoading(true)
+    if (!url) return showToast('Enter a URL first', 'err')
+    setLoading('preview')
     setPdfPreview(null)
     setBlockedSelectors([])
     setIsBlockMode(false)
 
     try {
-      const { data } = await axios.post(
-        'http://localhost:5001/api/convert/preview',
-        { url }
-      )
-
-      const htmlRes = await axios.get(
-        `http://localhost:5001/api/convert/preview/${data.previewId}`
-      )
-
+      const { data } = await axios.post(`${API}/preview`, { url })
+      const htmlRes = await axios.get(`${API}/preview/${data.previewId}`)
       setPreviewHtml(htmlRes.data)
-    } catch (err) {
-      console.error(err)
-      alert('Failed to load preview')
+      setActiveTab('page')
+      showToast('Preview loaded')
+    } catch {
+      showToast('Failed to load preview', 'err')
     } finally {
-      setLoading(false)
+      setLoading(null)
     }
   }
 
-  /* ==============================
-     GENERATE PDF
-  ============================== */
-
+  /* ── Generate PDF ── */
   const handleGeneratePdf = async () => {
-    if (!url) return alert('Enter URL')
+    if (!url) return showToast('Enter a URL first', 'err')
+    setLoading('pdf')
 
-    setLoading(true)
+    const customCSS = blockedSelectors.map(s => `${s} { display: none !important; }`).join('\n')
 
     try {
       const response = await axios.post(
-        'http://localhost:5001/api/convert/url-to-pdf',
-        { url, options, blockedSelectors },
-        { responseType: 'blob' }
-      );
-
-      const blob = new Blob([response.data], {
-        type: 'application/pdf'
-      })
-
+        `${API}/url-to-pdf`,
+        { url, options: { ...options, customCSS }, blockedSelectors },
+        { responseType: 'blob', withCredentials: true }
+      )
+      const blob = new Blob([response.data], { type: 'application/pdf' })
       setPdfPreview(URL.createObjectURL(blob))
       setPreviewHtml(null)
-    } catch (err) {
-      console.error(err)
-      alert('PDF failed')
+      showToast('PDF generated')
+    } catch {
+      showToast('PDF generation failed', 'err')
     } finally {
-      setLoading(false)
+      setLoading(null)
     }
   }
 
-  /* ==============================
-     UNDO / RESET
-  ============================== */
-
+  /* ── Undo / Reset ── */
   const handleUndo = () => {
     if (!blockedSelectors.length) return
-
     const last = blockedSelectors[blockedSelectors.length - 1]
     setBlockedSelectors(prev => prev.slice(0, -1))
-
-    const iframeDoc = iframeRef.current?.contentDocument
-    const el = iframeDoc?.querySelector(last)
-    el?.classList.remove('iframe-blocked')
+    iframeRef.current?.contentDocument?.querySelector(last)?.classList.remove('iframe-blocked')
   }
 
   const handleReset = () => {
-    const iframeDoc = iframeRef.current?.contentDocument
-    iframeDoc
-      ?.querySelectorAll('.iframe-blocked')
-      .forEach(el => el.classList.remove('iframe-blocked'))
-
+    iframeRef.current?.contentDocument?.querySelectorAll('.iframe-blocked').forEach(el => el.classList.remove('iframe-blocked'))
     setBlockedSelectors([])
   }
 
-  /* ==============================
-     UI
-  ============================== */
+  const applySuggested = () => {
+    setBlockedSelectors(prev => [...new Set([...prev, ...suggestedSelectors])])
+    setSuggestedSelectors([])
+    showToast(`Applied ${suggestedSelectors.length} saved selectors`)
+  }
 
+  const opt = (key: keyof typeof options, val: any) => setOptions(prev => ({ ...prev, [key]: val }))
+
+  /* ── UI ── */
   return (
-    <div className="min-h-screen bg-gray-100 p-8">
-      <div className="max-w-6xl mx-auto">
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
 
-        <h1 className="text-3xl font-bold mb-8">
-          URL to PDF Converter
-        </h1>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-        <div className="bg-white p-6 rounded shadow mb-6">
+        :root {
+          --bg: #0d0d0d;
+          --surface: #161616;
+          --surface2: #1f1f1f;
+          --border: #2a2a2a;
+          --accent: #e8ff47;
+          --accent2: #ff4747;
+          --text: #f0f0f0;
+          --muted: #666;
+          --radius: 4px;
+        }
 
-          <input
-            value={url}
-            onChange={e => setUrl(e.target.value)}
-            placeholder="https://example.com"
-            className="w-full px-3 py-2 border rounded mb-4"
-          />
+        body { background: var(--bg); }
 
-          <div className="flex gap-4">
-            <button
-              onClick={handleLoadPreview}
-              disabled={loading}
-              className="px-6 py-2 bg-blue-600 text-white rounded"
-            >
-              {loading ? 'Loading...' : 'Load Preview'}
-            </button>
+        .root {
+          min-height: 100vh;
+          background: var(--bg);
+          color: var(--text);
+          font-family: 'Syne', sans-serif;
+          display: grid;
+          grid-template-rows: auto 1fr;
+        }
 
-            <button
-              onClick={handleGeneratePdf}
-              disabled={loading}
-              className="px-6 py-2 bg-green-600 text-white rounded"
-            >
-              Generate PDF
-            </button>
-          </div>
-        </div>
+        /* Header */
+        .header {
+          border-bottom: 1px solid var(--border);
+          padding: 0 32px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          height: 56px;
+          background: var(--surface);
+        }
+        .header-logo {
+          font-size: 13px;
+          font-weight: 700;
+          letter-spacing: 0.15em;
+          text-transform: uppercase;
+          color: var(--accent);
+          font-family: 'JetBrains Mono', monospace;
+        }
+        .header-badge {
+          font-size: 11px;
+          font-family: 'JetBrains Mono', monospace;
+          color: var(--muted);
+          border: 1px solid var(--border);
+          padding: 3px 10px;
+          border-radius: 20px;
+        }
 
-        {previewHtml && (
-          <div className="bg-white p-6 rounded shadow mb-6">
-            <div className="flex gap-4 mb-4">
+        /* Layout */
+        .layout {
+          display: grid;
+          grid-template-columns: 340px 1fr;
+          height: calc(100vh - 56px);
+          overflow: hidden;
+        }
 
-              <button
-                onClick={() => setIsBlockMode(!isBlockMode)}
-                className={`px-6 py-2 rounded text-white ${
-                  isBlockMode ? 'bg-green-600' : 'bg-red-600'
-                }`}
-              >
-                {isBlockMode ? 'Block Mode ON' : 'Enable Block Mode'}
-              </button>
+        /* Sidebar */
+        .sidebar {
+          border-right: 1px solid var(--border);
+          background: var(--surface);
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+        }
 
-              <button
-                onClick={handleUndo}
-                disabled={!blockedSelectors.length}
-                className="px-6 py-2 bg-orange-600 text-white rounded"
-              >
-                Undo
-              </button>
+        .url-section {
+          padding: 20px;
+          border-bottom: 1px solid var(--border);
+        }
+        .url-label {
+          font-size: 10px;
+          font-family: 'JetBrains Mono', monospace;
+          letter-spacing: 0.12em;
+          color: var(--muted);
+          text-transform: uppercase;
+          margin-bottom: 8px;
+        }
+        .url-input-wrap {
+          position: relative;
+        }
+        .url-input {
+          width: 100%;
+          background: var(--surface2);
+          border: 1px solid var(--border);
+          border-radius: var(--radius);
+          color: var(--text);
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 12px;
+          padding: 10px 12px;
+          outline: none;
+          transition: border-color 0.15s;
+        }
+        .url-input:focus { border-color: var(--accent); }
+        .url-input::placeholder { color: var(--muted); }
 
-              <button
-                onClick={handleReset}
-                className="px-6 py-2 bg-gray-600 text-white rounded"
-              >
-                Reset
-              </button>
+        .actions {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 8px;
+          margin-top: 12px;
+        }
+        .btn {
+          font-family: 'Syne', sans-serif;
+          font-weight: 700;
+          font-size: 12px;
+          letter-spacing: 0.06em;
+          text-transform: uppercase;
+          border: none;
+          border-radius: var(--radius);
+          padding: 10px 0;
+          cursor: pointer;
+          transition: opacity 0.15s, transform 0.1s;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+        }
+        .btn:active { transform: scale(0.97); }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-preview { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+        .btn-preview:not(:disabled):hover { border-color: var(--accent); color: var(--accent); }
+        .btn-pdf { background: var(--accent); color: #0d0d0d; }
+        .btn-pdf:not(:disabled):hover { opacity: 0.88; }
 
-              <span className="px-4 py-2 bg-gray-100 rounded">
-                Blocked: {blockedSelectors.length}
-              </span>
+        /* Tabs */
+        .tabs {
+          display: flex;
+          border-bottom: 1px solid var(--border);
+        }
+        .tab {
+          flex: 1;
+          padding: 12px;
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: 0.1em;
+          text-transform: uppercase;
+          cursor: pointer;
+          border: none;
+          background: none;
+          color: var(--muted);
+          border-bottom: 2px solid transparent;
+          transition: all 0.15s;
+          font-family: 'Syne', sans-serif;
+        }
+        .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+        /* Scrollable panel */
+        .panel { flex: 1; overflow-y: auto; padding: 16px 20px; }
+        .panel::-webkit-scrollbar { width: 4px; }
+        .panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+        /* Suggestion banner */
+        .suggestion-banner {
+          background: rgba(232,255,71,0.07);
+          border: 1px solid rgba(232,255,71,0.3);
+          border-radius: var(--radius);
+          padding: 10px 12px;
+          margin-bottom: 12px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+        }
+        .suggestion-text { font-size: 11px; color: var(--accent); font-family: 'JetBrains Mono', monospace; line-height: 1.4; }
+        .btn-apply {
+          background: var(--accent);
+          color: #0d0d0d;
+          border: none;
+          border-radius: var(--radius);
+          padding: 5px 10px;
+          font-size: 11px;
+          font-weight: 700;
+          font-family: 'Syne', sans-serif;
+          cursor: pointer;
+          white-space: nowrap;
+          flex-shrink: 0;
+        }
+
+        /* Block controls */
+        .block-controls {
+          display: flex;
+          gap: 6px;
+          margin-bottom: 12px;
+          flex-wrap: wrap;
+        }
+        .btn-sm {
+          font-family: 'Syne', sans-serif;
+          font-weight: 700;
+          font-size: 10px;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          border-radius: var(--radius);
+          padding: 6px 10px;
+          cursor: pointer;
+          border: 1px solid var(--border);
+          background: var(--surface2);
+          color: var(--text);
+          transition: all 0.15s;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .btn-sm:disabled { opacity: 0.35; cursor: not-allowed; }
+        .btn-sm.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
+        .btn-sm:not(.active):not(:disabled):hover { border-color: var(--accent); color: var(--accent); }
+
+        /* Selector list */
+        .selector-list { display: flex; flex-direction: column; gap: 4px; }
+        .selector-item {
+          background: var(--surface2);
+          border: 1px solid var(--border);
+          border-radius: var(--radius);
+          padding: 7px 10px;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 11px;
+          color: var(--accent2);
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          word-break: break-all;
+        }
+        .selector-remove {
+          background: none;
+          border: none;
+          color: var(--muted);
+          cursor: pointer;
+          font-size: 14px;
+          line-height: 1;
+          flex-shrink: 0;
+          transition: color 0.15s;
+          padding: 0 2px;
+        }
+        .selector-remove:hover { color: var(--accent2); }
+        .empty-state {
+          text-align: center;
+          color: var(--muted);
+          font-size: 12px;
+          padding: 24px 0;
+          font-family: 'JetBrains Mono', monospace;
+          line-height: 1.7;
+        }
+
+        /* Options panel */
+        .opt-group { margin-bottom: 20px; }
+        .opt-group-label {
+          font-size: 10px;
+          font-family: 'JetBrains Mono', monospace;
+          letter-spacing: 0.12em;
+          color: var(--muted);
+          text-transform: uppercase;
+          margin-bottom: 10px;
+          padding-bottom: 6px;
+          border-bottom: 1px solid var(--border);
+        }
+        .opt-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+        .opt-label { font-size: 12px; color: #ccc; }
+        .opt-input {
+          background: var(--surface2);
+          border: 1px solid var(--border);
+          border-radius: var(--radius);
+          color: var(--text);
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 12px;
+          padding: 5px 8px;
+          outline: none;
+          width: 120px;
+          transition: border-color 0.15s;
+        }
+        .opt-input:focus { border-color: var(--accent); }
+        .opt-select {
+          background: var(--surface2);
+          border: 1px solid var(--border);
+          border-radius: var(--radius);
+          color: var(--text);
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 12px;
+          padding: 5px 8px;
+          outline: none;
+          width: 120px;
+        }
+        .opt-toggle {
+          width: 36px; height: 20px;
+          background: var(--border);
+          border-radius: 10px;
+          border: none;
+          cursor: pointer;
+          position: relative;
+          transition: background 0.2s;
+          flex-shrink: 0;
+        }
+        .opt-toggle.on { background: var(--accent); }
+        .opt-toggle::after {
+          content: '';
+          position: absolute;
+          width: 14px; height: 14px;
+          background: #fff;
+          border-radius: 50%;
+          top: 3px; left: 3px;
+          transition: transform 0.2s;
+        }
+        .opt-toggle.on::after { transform: translateX(16px); }
+
+        /* Main content */
+        .main {
+          display: flex;
+          flex-direction: column;
+          overflow: hidden;
+          background: var(--bg);
+        }
+        .main-header {
+          border-bottom: 1px solid var(--border);
+          padding: 0 24px;
+          height: 44px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          background: var(--surface);
+          flex-shrink: 0;
+        }
+        .main-title {
+          font-size: 11px;
+          font-family: 'JetBrains Mono', monospace;
+          color: var(--muted);
+          letter-spacing: 0.08em;
+        }
+        .status-dot {
+          width: 8px; height: 8px;
+          border-radius: 50%;
+          background: var(--border);
+          display: inline-block;
+          margin-right: 8px;
+        }
+        .status-dot.active { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+        .status-dot.block { background: var(--accent2); box-shadow: 0 0 6px var(--accent2); }
+
+        .main-body {
+          flex: 1;
+          overflow: hidden;
+          position: relative;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .iframe-wrap {
+          width: 100%;
+          height: 100%;
+          position: relative;
+        }
+        .preview-iframe {
+          width: 100%;
+          height: 100%;
+          border: none;
+          display: block;
+        }
+        .block-overlay {
+          position: absolute;
+          inset: 0;
+          pointer-events: none;
+          border: 2px solid var(--accent2);
+          opacity: 0.5;
+        }
+        .block-hint {
+          position: absolute;
+          top: 12px;
+          left: 50%;
+          transform: translateX(-50%);
+          background: var(--accent2);
+          color: #fff;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 11px;
+          padding: 6px 14px;
+          border-radius: 20px;
+          pointer-events: none;
+          white-space: nowrap;
+        }
+
+        .empty-main {
+          text-align: center;
+          user-select: none;
+        }
+        .empty-main-icon {
+          font-size: 48px;
+          margin-bottom: 16px;
+          opacity: 0.2;
+        }
+        .empty-main-title {
+          font-size: 20px;
+          font-weight: 800;
+          color: var(--muted);
+          margin-bottom: 6px;
+          letter-spacing: -0.02em;
+        }
+        .empty-main-sub {
+          font-size: 12px;
+          font-family: 'JetBrains Mono', monospace;
+          color: #333;
+        }
+
+        /* Spinner */
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .spinner {
+          width: 16px; height: 16px;
+          border: 2px solid transparent;
+          border-top-color: currentColor;
+          border-radius: 50%;
+          animation: spin 0.6s linear infinite;
+          display: inline-block;
+        }
+
+        /* Toast */
+        @keyframes slideUp { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform: translateY(0); } }
+        .toast {
+          position: fixed;
+          bottom: 24px;
+          left: 50%;
+          transform: translateX(-50%);
+          padding: 10px 20px;
+          border-radius: 4px;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 12px;
+          animation: slideUp 0.2s ease;
+          z-index: 9999;
+          pointer-events: none;
+        }
+        .toast.ok { background: var(--accent); color: #0d0d0d; }
+        .toast.err { background: var(--accent2); color: #fff; }
+      `}</style>
+
+      <div className="root">
+        {/* Header */}
+        <header className="header">
+          <span className="header-logo">⬛ PDF.FORGE</span>
+          <span className="header-badge">v2.0 · URL → PDF</span>
+        </header>
+
+        <div className="layout">
+          {/* ── Sidebar ── */}
+          <aside className="sidebar">
+            {/* URL input */}
+            <div className="url-section">
+              <div className="url-label">Target URL</div>
+              <div className="url-input-wrap">
+                <input
+                  className="url-input"
+                  value={url}
+                  onChange={e => setUrl(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleLoadPreview()}
+                  placeholder="https://example.com"
+                  spellCheck={false}
+                />
+              </div>
+              <div className="actions">
+                <button
+                  className="btn btn-preview"
+                  onClick={handleLoadPreview}
+                  disabled={!!loading}
+                >
+                  {loading === 'preview' ? <span className="spinner" /> : '⊞'}
+                  Preview
+                </button>
+                <button
+                  className="btn btn-pdf"
+                  onClick={handleGeneratePdf}
+                  disabled={!!loading}
+                >
+                  {loading === 'pdf' ? <span className="spinner" /> : '↓'}
+                  Export PDF
+                </button>
+              </div>
             </div>
 
-            <iframe
-              ref={iframeRef}
-              srcDoc={previewHtml}
-              sandbox="allow-same-origin"
-              className="w-full h-[500px] border"
-              title="Preview"
-            />
-          </div>
-        )}
+            {/* Tabs */}
+            <div className="tabs">
+              <button className={`tab ${activeTab === 'page' ? 'active' : ''}`} onClick={() => setActiveTab('page')}>
+                Page
+              </button>
+              <button className={`tab ${activeTab === 'options' ? 'active' : ''}`} onClick={() => setActiveTab('options')}>
+                Options
+              </button>
+            </div>
 
-        {pdfPreview && (
-          <div className="bg-white p-6 rounded shadow">
-            <iframe
-              src={pdfPreview}
-              className="w-full h-[500px]"
-              title="PDF Preview"
-            />
-          </div>
-        )}
+            {/* Panel: Page */}
+            {activeTab === 'page' && (
+              <div className="panel">
+                {/* Suggestion banner */}
+                {suggestedSelectors.length > 0 && (
+                  <div className="suggestion-banner">
+                    <div className="suggestion-text">
+                      ◈ {suggestedSelectors.length} saved selector{suggestedSelectors.length > 1 ? 's' : ''} found for this URL pattern
+                    </div>
+                    <button className="btn-apply" onClick={applySuggested}>Apply</button>
+                  </div>
+                )}
+
+                {/* Block controls */}
+                {previewHtml && (
+                  <div className="block-controls">
+                    <button
+                      className={`btn-sm ${isBlockMode ? 'active' : ''}`}
+                      onClick={() => setIsBlockMode(v => !v)}
+                    >
+                      {isBlockMode ? '◉ Blocking' : '○ Block Mode'}
+                    </button>
+                    <button className="btn-sm" onClick={handleUndo} disabled={!blockedSelectors.length}>
+                      ↩ Undo
+                    </button>
+                    <button className="btn-sm" onClick={handleReset} disabled={!blockedSelectors.length}>
+                      ⊘ Reset
+                    </button>
+                  </div>
+                )}
+
+                {/* Selector list */}
+                {blockedSelectors.length > 0 ? (
+                  <div className="selector-list">
+                    {blockedSelectors.map((sel, i) => (
+                      <div className="selector-item" key={i}>
+                        <span>{sel}</span>
+                        <button
+                          className="selector-remove"
+                          onClick={() => {
+                            iframeRef.current?.contentDocument?.querySelector(sel)?.classList.remove('iframe-blocked')
+                            setBlockedSelectors(prev => prev.filter((_, j) => j !== i))
+                          }}
+                        >×</button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="empty-state">
+                    {previewHtml
+                      ? '— no elements blocked —\nEnable block mode\nand click elements to hide'
+                      : '— load a preview first —'}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Panel: Options */}
+            {activeTab === 'options' && (
+              <div className="panel">
+                <div className="opt-group">
+                  <div className="opt-group-label">Output</div>
+                  <div className="opt-row">
+                    <span className="opt-label">Filename</span>
+                    <input className="opt-input" value={options.filename} onChange={e => opt('filename', e.target.value)} placeholder="auto" />
+                  </div>
+                  <div className="opt-row">
+                    <span className="opt-label">Format</span>
+                    <select className="opt-select" value={options.format} onChange={e => opt('format', e.target.value)}>
+                      {['A4','A3','A5','Letter','Legal'].map(f => <option key={f}>{f}</option>)}
+                    </select>
+                  </div>
+                  <div className="opt-row">
+                    <span className="opt-label">Scale</span>
+                    <input className="opt-input" type="number" min={0.1} max={2} step={0.1} value={options.scale} onChange={e => opt('scale', parseFloat(e.target.value))} />
+                  </div>
+                </div>
+
+                <div className="opt-group">
+                  <div className="opt-group-label">Layout</div>
+                  <div className="opt-row">
+                    <span className="opt-label">Landscape</span>
+                    <button className={`opt-toggle ${options.landscape ? 'on' : ''}`} onClick={() => opt('landscape', !options.landscape)} />
+                  </div>
+                  <div className="opt-row">
+                    <span className="opt-label">Print BG</span>
+                    <button className={`opt-toggle ${options.printBackground ? 'on' : ''}`} onClick={() => opt('printBackground', !options.printBackground)} />
+                  </div>
+                  <div className="opt-row">
+                    <span className="opt-label">Header/Footer</span>
+                    <button className={`opt-toggle ${options.displayHeaderFooter ? 'on' : ''}`} onClick={() => opt('displayHeaderFooter', !options.displayHeaderFooter)} />
+                  </div>
+                </div>
+
+                <div className="opt-group">
+                  <div className="opt-group-label">Margins</div>
+                  {(['marginTop','marginRight','marginBottom','marginLeft'] as const).map(k => (
+                    <div className="opt-row" key={k}>
+                      <span className="opt-label">{k.replace('margin', '')}</span>
+                      <input className="opt-input" value={options[k]} onChange={e => opt(k, e.target.value)} />
+                    </div>
+                  ))}
+                </div>
+
+                <div className="opt-group">
+                  <div className="opt-group-label">Behaviour</div>
+                  <div className="opt-row">
+                    <span className="opt-label">Accept Cookies</span>
+                    <button className={`opt-toggle ${options.acceptCookies ? 'on' : ''}`} onClick={() => opt('acceptCookies', !options.acceptCookies)} />
+                  </div>
+                  <div className="opt-row">
+                    <span className="opt-label">Remove Header</span>
+                    <button className={`opt-toggle ${options.removeHeader ? 'on' : ''}`} onClick={() => opt('removeHeader', !options.removeHeader)} />
+                  </div>
+                  <div className="opt-row">
+                    <span className="opt-label">Remove Footer</span>
+                    <button className={`opt-toggle ${options.removeFooter ? 'on' : ''}`} onClick={() => opt('removeFooter', !options.removeFooter)} />
+                  </div>
+                </div>
+              </div>
+            )}
+          </aside>
+
+          {/* ── Main ── */}
+          <main className="main">
+            <div className="main-header">
+              <span className="main-title">
+                <span className={`status-dot ${previewHtml ? (isBlockMode ? 'block' : 'active') : pdfPreview ? 'active' : ''}`} />
+                {previewHtml
+                  ? isBlockMode ? 'BLOCK MODE — click elements to hide' : 'PREVIEW'
+                  : pdfPreview ? 'PDF OUTPUT' : 'IDLE'}
+              </span>
+              {blockedSelectors.length > 0 && (
+                <span style={{ fontFamily: 'JetBrains Mono', fontSize: 11, color: 'var(--accent2)' }}>
+                  {blockedSelectors.length} hidden
+                </span>
+              )}
+            </div>
+
+            <div className="main-body">
+              {previewHtml ? (
+                <div className="iframe-wrap">
+                  {isBlockMode && (
+                    <>
+                      <div className="block-overlay" />
+                      <div className="block-hint">◉ Click any element to hide it</div>
+                    </>
+                  )}
+                  <iframe
+                    ref={iframeRef}
+                    srcDoc={previewHtml}
+                    sandbox="allow-same-origin"
+                    className="preview-iframe"
+                    title="Preview"
+                  />
+                </div>
+              ) : pdfPreview ? (
+                <iframe src={pdfPreview} className="preview-iframe" title="PDF Preview" />
+              ) : (
+                <div className="empty-main">
+                  <div className="empty-main-icon">⬛</div>
+                  <div className="empty-main-title">Nothing loaded</div>
+                  <div className="empty-main-sub">Enter a URL and press Preview</div>
+                </div>
+              )}
+            </div>
+          </main>
+        </div>
       </div>
-    </div>
+
+      {toast && <div className={`toast ${toast.type}`}>{toast.msg}</div>}
+    </>
   )
 }
 

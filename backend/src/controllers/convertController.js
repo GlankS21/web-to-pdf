@@ -25,7 +25,7 @@ const DEFAULT_USER_AGENT =
 const launchBrowser = (extraArgs = []) => puppeteer.launch({
   headless: true,
   args: ['--no-sandbox', '--disable-setuid-sandbox', ...extraArgs],
-  protocolTimeout: 120_000,
+  protocolTimeout: 45_000,
 });
 
 //  Configure a new page (timeout, user-agent, viewport)
@@ -58,7 +58,39 @@ const withBrowser = async (fn, { extraArgs = [], viewport } = {}) => {
   }
 };
 
+const toUrlPattern = (rawUrl) => {
+  const { hostname, pathname } = new URL(rawUrl);
+  const segments = pathname.replace(/\/$/, '').split('/');
+
+  // Nếu segment cuối trông như ID (số, hoặc chuỗi dài > 8 ký tự) → thay bằng *
+  const lastSegment = segments[segments.length - 1];
+  const looksLikeId = /^\d+$/.test(lastSegment) || lastSegment.length > 8;
+  if (looksLikeId) segments[segments.length - 1] = '*';
+
+  return hostname + segments.join('/');
+};
+
+const saveSelectors = (sessionId, url, selectors) => {
+  if (!sessionId || !selectors?.length) return;
+
+  const pattern = toUrlPattern(url);
+
+  if (!selectorMemory.has(sessionId)) selectorMemory.set(sessionId, new Map());
+  const sessionMap = selectorMemory.get(sessionId);
+
+  sessionMap.set(pattern, [...selectors]);
+
+  console.log(`Saved ${selectors.length} selectors for [${sessionId}] → ${pattern}`);
+};
+
+const getSavedSelectors = (sessionId, url) => {
+  const pattern = toUrlPattern(url);
+  return selectorMemory.get(sessionId)?.get(pattern) ?? [];
+};
+
 const previewCache = new Map();
+
+const selectorMemory = new Map();
 
 export const previewWebsite = async (req, res) => {
   const { url } = req.body;
@@ -165,9 +197,35 @@ export const getPreview = (req, res) => {
   res.send(html);
 };
 
+export const getSuggestedSelectors = (req, res) => {
+  const { url } = req.query;
+  if (!url) return res.status(400).json({ error: 'url query param is required' });
+
+  const sessionId = req.cookies?.sessionId;
+  if (!sessionId) return res.json({ selectors: [], pattern: null });
+
+  const pattern = toUrlPattern(url);
+  const selectors = getSavedSelectors(sessionId, url);
+
+  console.log(`Suggest [${sessionId}] → ${pattern}: ${selectors.length} selectors`);
+  res.json({ selectors, pattern });
+};
+
 export const urlToPdf = async (req, res) => {
   const { url, options = {}, blockedSelectors = [] } = req.body;
   if (!url) return res.status(400).json({ error: 'URL is required' });
+  
+  // Create session
+  let sessionId = req.cookies?.sessionId;
+  if(!sessionId){
+    sessionId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    res.cookie('sessionId', sessionId, {
+      httpOnly: true,
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+    console.log('New session created:', sessionId);
+  }
 
   const filename = options.filename || createFilename(url);
   console.log('Converting:', url);
@@ -212,6 +270,11 @@ export const urlToPdf = async (req, res) => {
           }, blockedSelectors);
           await new Promise((r) => setTimeout(r, 500));
           console.log('Blocked elements hidden');
+
+          // Wait for browser to finish reflow after hiding many elements —
+          // rAF x2 ensures the browser has painted before we generate the PDF
+          await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+          await new Promise((r) => setTimeout(r, 800));
         }
 
         // Inject custom CSS
@@ -251,6 +314,7 @@ export const urlToPdf = async (req, res) => {
     );
 
     console.log('PDF generated successfully');
+    if (sessionId) saveSelectors(sessionId, url, blockedSelectors);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
     res.send(pdfBuffer);
