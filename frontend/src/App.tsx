@@ -2,9 +2,12 @@ import {BrowserRouter, Route, Routes} from 'react-router';
 import SignInPage from './pages/SignInPage';
 import SignUpPage from './pages/SignUpPage';
 import ConvertPage from './pages/ConvertPage';
+import HtmlToPdf from './pages/HtmlToPdf';
+import WebToImage from './pages/WebToImage';
+import History from './pages/HistoryPage';
+
 import {Toaster} from 'sonner';
 import ProtectedRoute from './components/auth/ProtectedRoute';
-import EditorPage from './pages/EditorPage';
 
 function App() {
   return (
@@ -21,7 +24,18 @@ function App() {
             path='/signup'
             element={<SignUpPage/>}
           />
-          <Route path="/editor" element={<EditorPage />} />
+          <Route
+            path='/htmltopdf'
+            element={<HtmlToPdf />}
+          />
+          <Route
+            path='/webtoimg'
+            element={<WebToImage />}
+          />
+          <Route
+            path='/history'
+            element={<History />}
+          />
           <Route
             path='/'
             element={<ConvertPage/>}

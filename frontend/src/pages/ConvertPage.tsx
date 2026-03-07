@@ -1,5 +1,6 @@
+import UserMenu from '../components/UserMenu'
 import React, { useState, useRef, useEffect, useCallback } from 'react'
-import axios from 'axios'
+import api from '../lib/axios'
 
 const API = 'http://localhost:5001/api/convert'
 
@@ -81,7 +82,7 @@ const ConvertPage: React.FC = () => {
   const fetchSuggestions = useCallback(async (inputUrl: string) => {
     if (!inputUrl.startsWith('http')) return
     try {
-      const { data } = await axios.get(`${API}/selectors/suggest`, {
+      const { data } = await api.get(`${API}/selectors/suggest`, {
         params: { url: inputUrl },
         withCredentials: true,
       })
@@ -90,7 +91,7 @@ const ConvertPage: React.FC = () => {
 
     // Load saved header/footer config for this URL pattern
     try {
-      const { data } = await axios.get(`${API}/header-footer/suggest`, {
+      const { data } = await api.get(`${API}/header-footer/suggest`, {
         params: { url: inputUrl },
         withCredentials: true,
       })
@@ -159,8 +160,8 @@ const ConvertPage: React.FC = () => {
     setIsBlockMode(false)
 
     try {
-      const { data } = await axios.post(`${API}/preview`, { url })
-      const htmlRes = await axios.get(`${API}/preview/${data.previewId}`)
+      const { data } = await api.post(`${API}/preview`, { url })
+      const htmlRes = await api.get(`${API}/preview/${data.previewId}`)
       setPreviewHtml(htmlRes.data)
       setActiveTab('page')
       showToast('Preview loaded')
@@ -179,7 +180,7 @@ const ConvertPage: React.FC = () => {
     const customCSS = blockedSelectors.map(s => `${s} { display: none !important; }`).join('\n')
 
     try {
-      const response = await axios.post(
+      const response = await api.post(
         `${API}/url-to-pdf`,
         { url, options: { ...options, customCSS }, blockedSelectors, headerFooter },
         { responseType: 'blob', withCredentials: true }
@@ -287,6 +288,31 @@ const ConvertPage: React.FC = () => {
           border: 1px solid var(--border);
           padding: 3px 10px;
           border-radius: 20px;
+        }
+
+        /* Nav */
+        .nav {
+          display: flex;
+          align-items: center;
+          gap: 2px;
+        }
+        .nav-link {
+          font-size: 11px;
+          font-family: 'JetBrains Mono', monospace;
+          font-weight: 500;
+          letter-spacing: 0.08em;
+          color: var(--muted);
+          text-decoration: none;
+          padding: 6px 12px;
+          border-radius: var(--radius);
+          transition: all 0.15s;
+          border: 1px solid transparent;
+        }
+        .nav-link:hover { color: var(--text); }
+        .nav-link.active {
+          color: var(--accent);
+          border-color: var(--border);
+          background: var(--surface2);
         }
 
         /* Layout */
@@ -674,8 +700,13 @@ const ConvertPage: React.FC = () => {
       <div className="root">
         {/* Header */}
         <header className="header">
-          <span className="header-logo">CONVERT WEBPAGE TO PDF</span>
-          <span className="header-badge">URL → PDF</span>
+          <span className="header-logo">CONVERT WEBPAGE</span>
+          <nav className="nav">
+            <a className="nav-link active" href="/">URL → PDF</a>
+            <a className="nav-link" href="/htmltopdf">HTML → PDF</a>
+            <a className="nav-link" href="/webtoimg">URL → Image</a>
+          </nav>
+          <UserMenu />
         </header>
 
         <div className="layout">
@@ -690,7 +721,6 @@ const ConvertPage: React.FC = () => {
                   value={url}
                   onChange={e => setUrl(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleLoadPreview()}
-                  placeholder="https://example.com"
                   spellCheck={false}
                 />
               </div>
@@ -853,7 +883,7 @@ const ConvertPage: React.FC = () => {
                       className="opt-input"
                       value={headerFooter.headerText}
                       onChange={e => setHeaderFooter(prev => ({ ...prev, headerText: e.target.value }))}
-                      placeholder="Company name..."
+                      placeholder="text..."
                     />
                   </div>
 
@@ -863,7 +893,7 @@ const ConvertPage: React.FC = () => {
                       className="opt-input"
                       value={headerFooter.footerText}
                       onChange={e => setHeaderFooter(prev => ({ ...prev, footerText: e.target.value }))}
-                      placeholder="Confidential..."
+                      placeholder="text..."
                     />
                   </div>
 

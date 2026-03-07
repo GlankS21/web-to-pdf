@@ -23,10 +23,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       //  gọi api
       await authService.signUp(username, password, email, firstName, lastName);
 
-      toast.success("Đăng ký thành công! Bạn sẽ được chuyển sang trang đăng nhập.");
+      toast.success("Registration successful! You will be redirected to the login page");
     } catch (error) {
       console.error(error);
-      toast.error("Đăng ký không thành công");
+      toast.error("Registration failed");
     } finally {
       set({ loading: false });
     }
@@ -41,10 +41,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
       await get().fetchMe();
 
-      toast.success("Chào mừng bạn quay lại");
+      toast.success("Welcome back!");
     } catch (error) {
       console.error(error);
-      toast.error("Đăng nhập không thành công!");
+      toast.error("Login failed!");
     } finally {
       set({ loading: false });
     }
@@ -54,10 +54,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     try {
       get().clearState();
       await authService.signOut();
-      toast.success("Logout thành công!");
+      toast.success("Logout successful!");
     } catch (error) {
       console.error(error);
-      toast.error("Lỗi xảy ra khi logout. Hãy thử lại!");
+      toast.error("An error occurred while logging out. Please try again!");
     }
   },
 
@@ -70,7 +70,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } catch (error) {
       console.error(error);
       set({ user: null, accessToken: null });
-      toast.error("Lỗi xảy ra khi lấy dữ liệu người dùng. Hãy thử lại!");
+      toast.error("An error occurred while retrieving user data. Please try again!");
     } finally {
       set({ loading: false });
     }
@@ -89,7 +89,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       }
     } catch (error) {
       console.error(error);
-      toast.error("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại!");
+      toast.error("Your login session has expired. Please log in again!");
       get().clearState();
     } finally {
       set({ loading: false });

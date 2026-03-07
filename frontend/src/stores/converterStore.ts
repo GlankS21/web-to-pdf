@@ -83,7 +83,7 @@ export const useConverterStore = create<ConverterState>((set, get) => ({
     const { previewData, showNotification } = get();
     if (previewData) {
       downloadFile(previewData.blob, previewData.filename);
-      showNotification('✅ Downloaded successfully!', 'success');
+      showNotification(' Downloaded successfully!', 'success');
     }
   },
 
@@ -104,10 +104,10 @@ export const useConverterStore = create<ConverterState>((set, get) => ({
           filename,
           timestamp: new Date(),
         });
-        showNotification('✅ Preview ready!', 'success');
+        showNotification(' Preview ready!', 'success');
       } else {
         downloadFile(blob, filename);
-        showNotification('✅ PDF downloaded successfully!', 'success');
+        showNotification(' PDF downloaded successfully!', 'success');
         addToHistory('url-to-pdf', filename, 'success');
       }
     } catch (error) {
@@ -138,10 +138,10 @@ export const useConverterStore = create<ConverterState>((set, get) => ({
           filename,
           timestamp: new Date(),
         });
-        showNotification('✅ Preview ready!', 'success');
+        showNotification(' Preview ready!', 'success');
       } else {
         downloadFile(blob, filename);
-        showNotification('✅ PDF downloaded successfully!', 'success');
+        showNotification(' PDF downloaded successfully!', 'success');
         addToHistory('html-to-pdf', filename, 'success');
       }
     } catch (error) {
@@ -172,10 +172,10 @@ export const useConverterStore = create<ConverterState>((set, get) => ({
           filename,
           timestamp: new Date(),
         });
-        showNotification('✅ Preview ready!', 'success');
+        showNotification(' Preview ready!', 'success');
       } else {
         downloadFile(blob, filename);
-        showNotification('✅ Screenshot downloaded successfully!', 'success');
+        showNotification(' Screenshot downloaded successfully!', 'success');
         addToHistory('screenshot', filename, 'success');
       }
     } catch (error) {
