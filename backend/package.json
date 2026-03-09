@@ -25,6 +25,7 @@
     "jsdom": "^28.1.0",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.1.6",
+    "pdf-lib": "^1.17.1",
     "puppeteer": "^24.37.2",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",

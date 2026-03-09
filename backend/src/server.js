@@ -5,6 +5,7 @@ import {connectDB} from './libs/db.js';
 import authRouter from './routes/authRoute.js';
 import userRouter from './routes/userRoute.js';
 import convertRouter from './routes/convertRoute.js';
+import historyRouter from './routes/historyRoute.js';
 import cookieParser from 'cookie-parser';
 import {protectedRoute} from './middlewares/authMiddleware.js';
 
@@ -15,12 +16,14 @@ const PORT =  process.env.PORT || 5001;
 
 // middewares
 app.use(cors({origin: process.env.CLIENT_URL, credentials: true}));
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }))
+app.use(express.urlencoded({ limit: '50mb', extended: true }))
 app.use(cookieParser());
 
 // public routes
 app.use('/api/convert', convertRouter);
 app.use('/api/auth', authRouter);
+app.use('/api/history', historyRouter);
 
 // private routes
 app.use(protectedRoute);

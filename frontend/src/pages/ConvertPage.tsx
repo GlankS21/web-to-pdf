@@ -12,7 +12,7 @@ const ConvertPage: React.FC = () => {
   const [blockedSelectors, setBlockedSelectors] = useState<string[]>([])
   const [isBlockMode, setIsBlockMode] = useState(false)
   const [suggestedSelectors, setSuggestedSelectors] = useState<string[]>([])
-  const [activeTab, setActiveTab] = useState<'page' | 'options'>('page')
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [toast, setToast] = useState<{ msg: string; type: 'ok' | 'err' } | null>(null)
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
@@ -44,6 +44,7 @@ const ConvertPage: React.FC = () => {
     acceptCookies: true,
     removeHeader: false,
     removeFooter: false,
+    mobile: true,
   })
 
   /* ── Toast ── */
@@ -160,10 +161,9 @@ const ConvertPage: React.FC = () => {
     setIsBlockMode(false)
 
     try {
-      const { data } = await api.post(`${API}/preview`, { url })
+      const { data } = await api.post(`${API}/preview`, { url, mobile: options.mobile })
       const htmlRes = await api.get(`${API}/preview/${data.previewId}`)
       setPreviewHtml(htmlRes.data)
-      setActiveTab('page')
       showToast('Preview loaded')
     } catch {
       showToast('Failed to load preview', 'err')
@@ -174,17 +174,40 @@ const ConvertPage: React.FC = () => {
 
   /* ── Generate PDF ── */
   const handleGeneratePdf = async () => {
-    if (!url) return showToast('Enter a URL first', 'err')
+    if (!url && !previewHtml) return showToast('Enter a URL first', 'err')
     setLoading('pdf')
 
-    const customCSS = blockedSelectors.map(s => `${s} { display: none !important; }`).join('\n')
-
     try {
-      const response = await api.post(
-        `${API}/url-to-pdf`,
-        { url, options: { ...options, customCSS }, blockedSelectors, headerFooter },
-        { responseType: 'blob', withCredentials: true }
-      )
+      let response
+
+      if (previewHtml && iframeRef.current?.contentDocument) {
+        const iframeDoc = iframeRef.current.contentDocument
+
+        // Remove hover highlight from any element still highlighted
+        iframeDoc.querySelectorAll('.iframe-hover-highlight')
+          .forEach(el => el.classList.remove('iframe-hover-highlight'))
+
+        // Replace blocker styles: keep only the hide rule, strip the red UI styles
+        const blockerStyle = iframeDoc.getElementById('BLOCKER_STYLES_INJECTED')
+        if (blockerStyle) blockerStyle.textContent = '.iframe-blocked { display: none !important; }'
+
+        const liveHtml = '<!DOCTYPE html>\n' + iframeDoc.documentElement.outerHTML
+        const viewportWidth = iframeRef.current.offsetWidth
+
+        response = await api.post(
+          `${API}/html-to-pdf`,
+          { html: liveHtml, options, headerFooter, viewportWidth },
+          { responseType: 'blob', withCredentials: true }
+        )
+      } else {
+        // No preview loaded yet — fall back to URL-based export
+        response = await api.post(
+          `${API}/url-to-pdf`,
+          { url, options, blockedSelectors, headerFooter },
+          { responseType: 'blob', withCredentials: true }
+        )
+      }
+
       const blob = new Blob([response.data], { type: 'application/pdf' })
       setPdfPreview(URL.createObjectURL(blob))
       setPreviewHtml(null)
@@ -215,7 +238,13 @@ const ConvertPage: React.FC = () => {
     showToast(`Applied ${suggestedSelectors.length} saved selectors`)
   }
 
-  const opt = (key: keyof typeof options, val: unknown) => setOptions(prev => ({ ...prev, [key]: val as never }))
+  const opt = (key: keyof typeof options, val: unknown) => {
+    setOptions(prev => ({ ...prev, [key]: val as never }))
+    if (key === 'mobile' && previewHtml) {
+      setPreviewHtml(null)
+      showToast('Reload preview to apply mobile mode')
+    }
+  }
 
   /* ── Logo upload ── */
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -315,26 +344,24 @@ const ConvertPage: React.FC = () => {
           background: var(--surface2);
         }
 
-        /* Layout */
+        /* Layout — top controls + full-width preview */
         .layout {
-          display: grid;
-          grid-template-columns: 340px 1fr;
+          display: flex;
+          flex-direction: column;
           height: calc(100vh - 56px);
           overflow: hidden;
         }
 
-        /* Sidebar */
-        .sidebar {
-          border-right: 1px solid var(--border);
+        /* Controls bar */
+        .controls-bar {
           background: var(--surface);
-          display: flex;
-          flex-direction: column;
-          overflow: hidden;
-        }
-
-        .url-section {
-          padding: 20px;
           border-bottom: 1px solid var(--border);
+          padding: 10px 20px;
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-shrink: 0;
+          flex-wrap: wrap;
         }
         .url-label {
           font-size: 10px;
@@ -342,32 +369,25 @@ const ConvertPage: React.FC = () => {
           letter-spacing: 0.12em;
           color: var(--muted);
           text-transform: uppercase;
-          margin-bottom: 8px;
-        }
-        .url-input-wrap {
-          position: relative;
+          white-space: nowrap;
         }
         .url-input {
-          width: 100%;
+          flex: 1;
+          min-width: 200px;
+          max-width: 600px;
           background: var(--surface2);
           border: 1px solid var(--border);
           border-radius: var(--radius);
           color: var(--text);
           font-family: 'JetBrains Mono', monospace;
           font-size: 12px;
-          padding: 10px 12px;
+          padding: 8px 12px;
           outline: none;
           transition: border-color 0.15s;
         }
         .url-input:focus { border-color: var(--accent); }
         .url-input::placeholder { color: var(--muted); }
 
-        .actions {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 8px;
-          margin-top: 12px;
-        }
         .btn {
           font-family: 'Syne', sans-serif;
           font-weight: 700;
@@ -376,13 +396,15 @@ const ConvertPage: React.FC = () => {
           text-transform: uppercase;
           border: none;
           border-radius: var(--radius);
-          padding: 10px 0;
+          padding: 8px 16px;
           cursor: pointer;
           transition: opacity 0.15s, transform 0.1s;
           display: flex;
           align-items: center;
           justify-content: center;
           gap: 6px;
+          white-space: nowrap;
+          flex-shrink: 0;
         }
         .btn:active { transform: scale(0.97); }
         .btn:disabled { opacity: 0.4; cursor: not-allowed; }
@@ -391,57 +413,10 @@ const ConvertPage: React.FC = () => {
         .btn-pdf { background: var(--accent); color: #0d0d0d; }
         .btn-pdf:not(:disabled):hover { opacity: 0.88; }
 
-        /* Tabs */
-        .tabs {
-          display: flex;
-          border-bottom: 1px solid var(--border);
-        }
-        .tab {
-          flex: 1;
-          padding: 12px;
-          font-size: 11px;
-          font-weight: 700;
-          letter-spacing: 0.1em;
-          text-transform: uppercase;
-          cursor: pointer;
-          border: none;
-          background: none;
-          color: var(--muted);
-          border-bottom: 2px solid transparent;
-          transition: all 0.15s;
-          font-family: 'Syne', sans-serif;
-        }
-        .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-
-        /* Scrollable panel */
-        .panel { flex: 1; overflow-y: auto; padding: 16px 20px; }
-        .panel::-webkit-scrollbar { width: 4px; }
-        .panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-
-        /* Suggestion banner */
-        .suggestion-banner {
-          background: rgba(232,255,71,0.07);
-          border: 1px solid rgba(232,255,71,0.3);
-          border-radius: var(--radius);
-          padding: 10px 12px;
-          margin-bottom: 12px;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 8px;
-        }
-        .suggestion-text { font-size: 11px; color: var(--accent); font-family: 'JetBrains Mono', monospace; line-height: 1.4; }
-        .btn-apply {
-          background: var(--accent);
-          color: #0d0d0d;
-          border: none;
-          border-radius: var(--radius);
-          padding: 5px 10px;
-          font-size: 11px;
-          font-weight: 700;
-          font-family: 'Syne', sans-serif;
-          cursor: pointer;
-          white-space: nowrap;
+        .controls-divider {
+          width: 1px;
+          height: 24px;
+          background: var(--border);
           flex-shrink: 0;
         }
 
@@ -449,8 +424,7 @@ const ConvertPage: React.FC = () => {
         .block-controls {
           display: flex;
           gap: 6px;
-          margin-bottom: 12px;
-          flex-wrap: wrap;
+          align-items: center;
         }
         .btn-sm {
           font-family: 'Syne', sans-serif;
@@ -468,26 +442,91 @@ const ConvertPage: React.FC = () => {
           display: flex;
           align-items: center;
           gap: 4px;
+          white-space: nowrap;
+          flex-shrink: 0;
         }
         .btn-sm:disabled { opacity: 0.35; cursor: not-allowed; }
         .btn-sm.active { background: var(--accent2); border-color: var(--accent2); color: #fff; }
         .btn-sm:not(.active):not(:disabled):hover { border-color: var(--accent); color: var(--accent); }
 
-        /* Selector list */
-        .selector-list { display: flex; flex-direction: column; gap: 4px; }
+        /* Settings panel */
+        .settings-panel {
+          background: var(--surface);
+          border-bottom: 1px solid var(--border);
+          overflow: hidden;
+          flex-shrink: 0;
+          max-height: 0;
+          transition: max-height 0.25s ease;
+        }
+        .settings-panel.open { max-height: 420px; }
+        .settings-inner {
+          padding: 16px 20px;
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+          gap: 0 40px;
+          overflow-y: auto;
+          max-height: 420px;
+        }
+        .settings-inner::-webkit-scrollbar { width: 4px; }
+        .settings-inner::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+        /* Suggestion banner */
+        .suggestion-banner {
+          background: rgba(232,255,71,0.07);
+          border: 1px solid rgba(232,255,71,0.3);
+          border-radius: var(--radius);
+          padding: 7px 12px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          flex-shrink: 0;
+        }
+        .suggestion-text { font-size: 11px; color: var(--accent); font-family: 'JetBrains Mono', monospace; }
+        .btn-apply {
+          background: var(--accent);
+          color: #0d0d0d;
+          border: none;
+          border-radius: var(--radius);
+          padding: 4px 10px;
+          font-size: 11px;
+          font-weight: 700;
+          font-family: 'Syne', sans-serif;
+          cursor: pointer;
+          white-space: nowrap;
+          flex-shrink: 0;
+        }
+
+        /* Selector chips strip — fixed single-row, scrollable horizontally */
+        .selector-strip {
+          background: var(--surface);
+          border-bottom: 1px solid var(--border);
+          padding: 0 20px;
+          display: flex;
+          flex-wrap: nowrap;
+          gap: 6px;
+          align-items: center;
+          flex-shrink: 0;
+          height: 36px;
+          overflow-x: auto;
+          overflow-y: hidden;
+        }
+        .selector-strip::-webkit-scrollbar { height: 3px; }
+        .selector-strip::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
         .selector-item {
           background: var(--surface2);
           border: 1px solid var(--border);
           border-radius: var(--radius);
-          padding: 7px 10px;
+          padding: 4px 8px;
           font-family: 'JetBrains Mono', monospace;
           font-size: 11px;
           color: var(--accent2);
           display: flex;
           align-items: center;
-          justify-content: space-between;
-          gap: 8px;
-          word-break: break-all;
+          gap: 6px;
+          max-width: 300px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
         .selector-remove {
           background: none;
@@ -498,27 +537,19 @@ const ConvertPage: React.FC = () => {
           line-height: 1;
           flex-shrink: 0;
           transition: color 0.15s;
-          padding: 0 2px;
+          padding: 0;
         }
         .selector-remove:hover { color: var(--accent2); }
-        .empty-state {
-          text-align: center;
-          color: var(--muted);
-          font-size: 12px;
-          padding: 24px 0;
-          font-family: 'JetBrains Mono', monospace;
-          line-height: 1.7;
-        }
 
         /* Options panel */
-        .opt-group { margin-bottom: 20px; }
+        .opt-group { margin-bottom: 16px; }
         .opt-group-label {
           font-size: 10px;
           font-family: 'JetBrains Mono', monospace;
           letter-spacing: 0.12em;
           color: var(--muted);
           text-transform: uppercase;
-          margin-bottom: 10px;
+          margin-bottom: 8px;
           padding-bottom: 6px;
           border-bottom: 1px solid var(--border);
         }
@@ -570,52 +601,42 @@ const ConvertPage: React.FC = () => {
         }
         .opt-toggle.on::after { transform: translateX(16px); }
 
-        /* Main content */
-        .main {
+        /* Preview area */
+        .preview-area {
+          flex: 1;
+          overflow: hidden;
           display: flex;
           flex-direction: column;
-          overflow: hidden;
           background: var(--bg);
         }
-        .main-header {
+        .status-bar {
+          flex-shrink: 0;
+          height: 32px;
+          background: var(--surface);
           border-bottom: 1px solid var(--border);
-          padding: 0 24px;
-          height: 44px;
           display: flex;
           align-items: center;
-          justify-content: space-between;
-          background: var(--surface);
-          flex-shrink: 0;
-        }
-        .main-title {
-          font-size: 11px;
+          padding: 0 16px;
+          gap: 8px;
           font-family: 'JetBrains Mono', monospace;
+          font-size: 11px;
           color: var(--muted);
           letter-spacing: 0.08em;
         }
         .status-dot {
-          width: 8px; height: 8px;
+          width: 7px; height: 7px;
           border-radius: 50%;
           background: var(--border);
           display: inline-block;
-          margin-right: 8px;
+          flex-shrink: 0;
         }
         .status-dot.active { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
         .status-dot.block { background: var(--accent2); box-shadow: 0 0 6px var(--accent2); }
 
-        .main-body {
-          flex: 1;
-          overflow: hidden;
-          position: relative;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-
         .iframe-wrap {
-          width: 100%;
-          height: 100%;
+          flex: 1;
           position: relative;
+          overflow: hidden;
         }
         .preview-iframe {
           width: 100%;
@@ -632,7 +653,7 @@ const ConvertPage: React.FC = () => {
         }
         .block-hint {
           position: absolute;
-          top: 12px;
+          top: 44px;
           left: 50%;
           transform: translateX(-50%);
           background: var(--accent2);
@@ -643,16 +664,17 @@ const ConvertPage: React.FC = () => {
           border-radius: 20px;
           pointer-events: none;
           white-space: nowrap;
+          z-index: 11;
         }
 
         .empty-main {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
           text-align: center;
           user-select: none;
-        }
-        .empty-main-icon {
-          font-size: 48px;
-          margin-bottom: 16px;
-          opacity: 0.2;
         }
         .empty-main-title {
           font-size: 20px;
@@ -710,110 +732,71 @@ const ConvertPage: React.FC = () => {
         </header>
 
         <div className="layout">
-          {/* ── Sidebar ── */}
-          <aside className="sidebar">
-            {/* URL input */}
-            <div className="url-section">
-              <div className="url-label">Target URL</div>
-              <div className="url-input-wrap">
-                <input
-                  className="url-input"
-                  value={url}
-                  onChange={e => setUrl(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleLoadPreview()}
-                  spellCheck={false}
-                />
-              </div>
-              <div className="actions">
-                <button
-                  className="btn btn-preview"
-                  onClick={handleLoadPreview}
-                  disabled={!!loading}
-                >
-                  {loading === 'preview' ? <span className="spinner" /> : '⊞'}
-                  Preview
-                </button>
-                <button
-                  className="btn btn-pdf"
-                  onClick={handleGeneratePdf}
-                  disabled={!!loading}
-                >
-                  {loading === 'pdf' ? <span className="spinner" /> : '↓'}
-                  Export PDF
-                </button>
-              </div>
-            </div>
+          {/* ── Controls bar ── */}
+          <div className="controls-bar">
+            <span className="url-label">URL</span>
+            <input
+              className="url-input"
+              value={url}
+              onChange={e => setUrl(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleLoadPreview()}
+              placeholder="https://..."
+              spellCheck={false}
+            />
+            <button className="btn btn-preview" onClick={handleLoadPreview} disabled={!!loading}>
+              {loading === 'preview' ? <span className="spinner" /> : '⊞'}
+              Preview
+            </button>
+            <button className="btn btn-pdf" onClick={handleGeneratePdf} disabled={!!loading}>
+              {loading === 'pdf' ? <span className="spinner" /> : '↓'}
+              Export PDF
+            </button>
 
-            {/* Tabs */}
-            <div className="tabs">
-              <button className={`tab ${activeTab === 'page' ? 'active' : ''}`} onClick={() => setActiveTab('page')}>
-                Page
-              </button>
-              <button className={`tab ${activeTab === 'options' ? 'active' : ''}`} onClick={() => setActiveTab('options')}>
-                Options
-              </button>
-            </div>
+            <div className="controls-divider" />
 
-            {/* Panel: Page */}
-            {activeTab === 'page' && (
-              <div className="panel">
-                {/* Suggestion banner */}
-                {suggestedSelectors.length > 0 && (
-                  <div className="suggestion-banner">
-                    <div className="suggestion-text">
-                      ◈ {suggestedSelectors.length} saved selector{suggestedSelectors.length > 1 ? 's' : ''} found for this URL pattern
-                    </div>
-                    <button className="btn-apply" onClick={applySuggested}>Apply</button>
-                  </div>
-                )}
+            <button
+              className={`btn-sm ${settingsOpen ? 'active' : ''}`}
+              onClick={() => setSettingsOpen(v => !v)}
+            >
+              ⚙ Settings
+            </button>
 
-                {/* Block controls */}
-                {previewHtml && (
-                  <div className="block-controls">
-                    <button
-                      className={`btn-sm ${isBlockMode ? 'active' : ''}`}
-                      onClick={() => setIsBlockMode(v => !v)}
-                    >
-                      {isBlockMode ? '◉ Blocking' : '○ Block Mode'}
-                    </button>
-                    <button className="btn-sm" onClick={handleUndo} disabled={!blockedSelectors.length}>
-                      ↩ Undo
-                    </button>
-                    <button className="btn-sm" onClick={handleReset} disabled={!blockedSelectors.length}>
-                      ⊘ Reset
-                    </button>
-                  </div>
-                )}
-
-                {/* Selector list */}
-                {blockedSelectors.length > 0 ? (
-                  <div className="selector-list">
-                    {blockedSelectors.map((sel, i) => (
-                      <div className="selector-item" key={i}>
-                        <span>{sel}</span>
-                        <button
-                          className="selector-remove"
-                          onClick={() => {
-                            iframeRef.current?.contentDocument?.querySelector(sel)?.classList.remove('iframe-blocked')
-                            setBlockedSelectors(prev => prev.filter((_, j) => j !== i))
-                          }}
-                        >×</button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="empty-state">
-                    {previewHtml
-                      ? '— no elements blocked —\nEnable block mode\nand click elements to hide'
-                      : '— load a preview first —'}
-                  </div>
-                )}
+            {/* Suggestion */}
+            {suggestedSelectors.length > 0 && (
+              <div className="suggestion-banner">
+                <span className="suggestion-text">◈ {suggestedSelectors.length} saved selector{suggestedSelectors.length > 1 ? 's' : ''}</span>
+                <button className="btn-apply" onClick={applySuggested}>Apply</button>
               </div>
             )}
 
-            {/* Panel: Options */}
-            {activeTab === 'options' && (
-              <div className="panel">
+            {/* Block controls (only when preview loaded) */}
+            {previewHtml && (
+              <>
+                <div className="controls-divider" />
+                <div className="block-controls">
+                  <button
+                    className={`btn-sm ${isBlockMode ? 'active' : ''}`}
+                    onClick={() => setIsBlockMode(v => !v)}
+                  >
+                    {isBlockMode ? '◉ Blocking' : '○ Block'}
+                  </button>
+                  <button className="btn-sm" onClick={handleUndo} disabled={!blockedSelectors.length}>↩ Undo</button>
+                  <button className="btn-sm" onClick={handleReset} disabled={!blockedSelectors.length}>⊘ Reset</button>
+                  {blockedSelectors.length > 0 && (
+                    <span style={{ fontFamily: 'JetBrains Mono', fontSize: 11, color: 'var(--accent2)', marginLeft: 4 }}>
+                      {blockedSelectors.length} hidden
+                    </span>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* ── Settings panel (collapsible) ── */}
+          <div className={`settings-panel ${settingsOpen ? 'open' : ''}`}>
+            <div className="settings-inner">
+              {/* Col: Output + Layout + Margins */}
+              <div>
                 <div className="opt-group">
                   <div className="opt-group-label">Output</div>
                   <div className="opt-row">
@@ -831,7 +814,6 @@ const ConvertPage: React.FC = () => {
                     <input className="opt-input" type="number" min={0.1} max={2} step={0.1} value={options.scale} onChange={e => opt('scale', parseFloat(e.target.value))} />
                   </div>
                 </div>
-
                 <div className="opt-group">
                   <div className="opt-group-label">Layout</div>
                   <div className="opt-row">
@@ -847,7 +829,6 @@ const ConvertPage: React.FC = () => {
                     <button className={`opt-toggle ${options.displayHeaderFooter ? 'on' : ''}`} onClick={() => opt('displayHeaderFooter', !options.displayHeaderFooter)} />
                   </div>
                 </div>
-
                 <div className="opt-group">
                   <div className="opt-group-label">Margins</div>
                   {(['marginTop','marginRight','marginBottom','marginLeft'] as const).map(k => (
@@ -857,9 +838,16 @@ const ConvertPage: React.FC = () => {
                     </div>
                   ))}
                 </div>
+              </div>
 
+              {/* Col: Behaviour + Header/Footer */}
+              <div>
                 <div className="opt-group">
                   <div className="opt-group-label">Behaviour</div>
+                  <div className="opt-row">
+                    <span className="opt-label">Mobile View</span>
+                    <button className={`opt-toggle ${options.mobile ? 'on' : ''}`} onClick={() => opt('mobile', !options.mobile)} />
+                  </div>
                   <div className="opt-row">
                     <span className="opt-label">Accept Cookies</span>
                     <button className={`opt-toggle ${options.acceptCookies ? 'on' : ''}`} onClick={() => opt('acceptCookies', !options.acceptCookies)} />
@@ -873,108 +861,94 @@ const ConvertPage: React.FC = () => {
                     <button className={`opt-toggle ${options.removeFooter ? 'on' : ''}`} onClick={() => opt('removeFooter', !options.removeFooter)} />
                   </div>
                 </div>
-
                 <div className="opt-group">
                   <div className="opt-group-label">Header / Footer</div>
-
                   <div className="opt-row">
                     <span className="opt-label">Header text</span>
-                    <input
-                      className="opt-input"
-                      value={headerFooter.headerText}
-                      onChange={e => setHeaderFooter(prev => ({ ...prev, headerText: e.target.value }))}
-                      placeholder="text..."
-                    />
+                    <input className="opt-input" value={headerFooter.headerText} onChange={e => setHeaderFooter(prev => ({ ...prev, headerText: e.target.value }))} placeholder="text..." />
                   </div>
-
                   <div className="opt-row">
                     <span className="opt-label">Footer text</span>
-                    <input
-                      className="opt-input"
-                      value={headerFooter.footerText}
-                      onChange={e => setHeaderFooter(prev => ({ ...prev, footerText: e.target.value }))}
-                      placeholder="text..."
-                    />
+                    <input className="opt-input" value={headerFooter.footerText} onChange={e => setHeaderFooter(prev => ({ ...prev, footerText: e.target.value }))} placeholder="text..." />
                   </div>
-
                   <div className="opt-row">
                     <span className="opt-label">Logo</span>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
                       {headerFooter.logoBase64 && (
-                        <img
-                          src={`data:${headerFooter.logoMime};base64,${headerFooter.logoBase64}`}
-                          style={{ height: 24, objectFit: 'contain', borderRadius: 2 }}
-                        />
+                        <img src={`data:${headerFooter.logoMime};base64,${headerFooter.logoBase64}`} style={{ height: 24, objectFit: 'contain', borderRadius: 2 }} />
                       )}
                       <label style={{ cursor: 'pointer' }}>
                         <span className="btn-sm" style={{ pointerEvents: 'none' }}>
                           {headerFooter.logoBase64 ? '↺ Change' : '↑ Upload'}
                         </span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          style={{ display: 'none' }}
-                          onChange={handleLogoUpload}
-                        />
+                        <input type="file" accept="image/*" style={{ display: 'none' }} onChange={handleLogoUpload} />
                       </label>
                       {headerFooter.logoBase64 && (
-                        <button
-                          className="btn-sm"
-                          onClick={() => setHeaderFooter(prev => ({ ...prev, logoBase64: '', logoMime: '' }))}
-                        >
-                          × Remove
-                        </button>
+                        <button className="btn-sm" onClick={() => setHeaderFooter(prev => ({ ...prev, logoBase64: '', logoMime: '' }))}>× Remove</button>
                       )}
                     </div>
                   </div>
                 </div>
               </div>
-            )}
-          </aside>
+            </div>
+          </div>
 
-          {/* ── Main ── */}
-          <main className="main">
-            <div className="main-header">
-              <span className="main-title">
-                <span className={`status-dot ${previewHtml ? (isBlockMode ? 'block' : 'active') : pdfPreview ? 'active' : ''}`} />
+          {/* ── Selector chips strip ── */}
+          {blockedSelectors.length > 0 && (
+            <div className="selector-strip">
+              {blockedSelectors.map((sel, i) => (
+                <div className="selector-item" key={i}>
+                  <span title={sel}>{sel}</span>
+                  <button
+                    className="selector-remove"
+                    onClick={() => {
+                      iframeRef.current?.contentDocument?.querySelector(sel)?.classList.remove('iframe-blocked')
+                      setBlockedSelectors(prev => prev.filter((_, j) => j !== i))
+                    }}
+                  >×</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ── Preview area (100% width) ── */}
+          <div className="preview-area">
+            {/* Status bar overlay */}
+            {(previewHtml || pdfPreview) && (
+              <div className="status-bar">
+                <span className={`status-dot ${previewHtml ? (isBlockMode ? 'block' : 'active') : 'active'}`} />
                 {previewHtml
                   ? isBlockMode ? 'BLOCK MODE — click elements to hide' : 'PREVIEW'
-                  : pdfPreview ? 'PDF OUTPUT' : 'IDLE'}
-              </span>
-              {blockedSelectors.length > 0 && (
-                <span style={{ fontFamily: 'JetBrains Mono', fontSize: 11, color: 'var(--accent2)' }}>
-                  {blockedSelectors.length} hidden
-                </span>
-              )}
-            </div>
+                  : 'PDF OUTPUT'}
+              </div>
+            )}
 
-            <div className="main-body">
-              {previewHtml ? (
-                <div className="iframe-wrap">
-                  {isBlockMode && (
-                    <>
-                      <div className="block-overlay" />
-                      <div className="block-hint">◉ Click any element to hide it</div>
-                    </>
-                  )}
-                  <iframe
-                    ref={iframeRef}
-                    srcDoc={previewHtml}
-                    sandbox="allow-same-origin"
-                    className="preview-iframe"
-                    title="Preview"
-                  />
-                </div>
-              ) : pdfPreview ? (
-                <iframe src={pdfPreview} className="preview-iframe" title="PDF Preview" />
-              ) : (
-                <div className="empty-main">
-                  <div className="empty-main-title">Nothing loaded</div>
-                  <div className="empty-main-sub">Enter a URL and press Preview</div>
-                </div>
-              )}
-            </div>
-          </main>
+            {previewHtml ? (
+              <div className="iframe-wrap">
+                {isBlockMode && (
+                  <>
+                    <div className="block-overlay" />
+                    <div className="block-hint">◉ Click any element to hide it</div>
+                  </>
+                )}
+                <iframe
+                  ref={iframeRef}
+                  srcDoc={previewHtml}
+                  sandbox="allow-same-origin"
+                  className="preview-iframe"
+                  style={options.mobile ? { width: '390px', margin: '0 auto', display: 'block' } : undefined}
+                  title="Preview"
+                />
+              </div>
+            ) : pdfPreview ? (
+              <iframe src={pdfPreview} className="preview-iframe" title="PDF Preview" />
+            ) : (
+              <div className="empty-main">
+                <div className="empty-main-title">Nothing loaded</div>
+                <div className="empty-main-sub">Enter a URL and press Preview</div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

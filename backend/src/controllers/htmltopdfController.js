@@ -1,61 +1,50 @@
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
-import ConversionHistory from '../models/ConversionHistory.js';
-import { withBrowser } from './websiteController.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { withBrowser } from '../libs/puppeteerUtils.js';
+import { buildHeaderTemplate, buildFooterTemplate } from '../libs/pdfTemplates.js';
+import { saveHistory, UPLOADS_DIR } from '../libs/fileUtils.js';
+import { MOBILE_UA, MOBILE_VP, PAPER_W, PAPER_H, injectPdfPreset } from '../libs/pdfUtils.js';
 
-const UPLOADS_DIR = path.join(__dirname, '../../uploads/conversions');
-
-// Đảm bảo thư mục tồn tại
-if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-
-const buildHeaderTemplate = ({ headerText, logoBase64, logoMime } = {}) => {
-  const logo = logoBase64
-    ? `<img src="data:${logoMime};base64,${logoBase64}" style="height:28px;object-fit:contain;margin-right:8px;" />`
-    : '';
-  const text = headerText
-    ? `<span style="font-size:9px;color:#444;">${headerText}</span>`
-    : '';
-  if (!logo && !text) return '<span></span>';
-  return `<div style="width:100%;display:flex;align-items:center;padding:4px 40px;border-bottom:1px solid #ddd;">${logo}${text}</div>`;
-};
-
-const buildFooterTemplate = ({ footerText } = {}, currentDate) => {
-  const left = footerText
-    ? `<span style="font-size:9px;color:#666;">${footerText}</span>`
-    : `<span style="font-size:9px;color:#666;">${currentDate}</span>`;
-  return `<div style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:4px 40px;">${left}<span style="font-size:9px;color:#666;">Page <span class="pageNumber"></span></span></div>`;
-};
-
-// POST /api/convert/html-to-pdf
 export const htmlToPdf = async (req, res) => {
   const { html, options = {}, headerFooter } = req.body;
-
-  if (!html?.trim()) {
-    return res.status(400).json({ message: 'html is required' });
-  }
+  if (!html?.trim()) return res.status(400).json({ message: 'html is required' });
 
   try {
     const currentDate = new Date().toLocaleDateString();
     const filename = options.filename || `html-export-${Date.now()}.pdf`;
 
-    const pdfBuffer = await withBrowser(async (browser, page) => {
-      // Load HTML trực tiếp vào page
-      await page.setContent(html, { waitUntil: 'networkidle0' });
+    const format      = options.format || 'A4';
+    const landscape   = options.landscape || false;
+    const marginLeft  = parseInt(options.marginLeft  || '40') || 40;
+    const marginRight = parseInt(options.marginRight || '40') || 40;
+    const mobile      = options.mobile === true;
+
+    const paperW   = landscape ? (PAPER_H[format] ?? 1123) : (PAPER_W[format] ?? 794);
+    const contentW = Math.max(paperW - marginLeft - marginRight, 200);
+    const vpWidth  = mobile ? MOBILE_VP : contentW;
+    const pdfScale = mobile ? Math.min(contentW / MOBILE_VP, 2) : (options.scale || 1);
+
+    console.log(`[htmlToPdf] format=${format} mobile=${mobile} vpWidth=${vpWidth} scale=${pdfScale}`);
+
+    const pdfBuffer = await withBrowser(async (_browser, page) => {
+      await page.emulateMediaType('screen');
+      if (mobile) await page.setUserAgent(MOBILE_UA);
+      await page.setViewport({ width: vpWidth, height: 900, deviceScaleFactor: 1 });
+      await page.setContent(html, { waitUntil: 'networkidle2', timeout: 60_000 });
+
+      await injectPdfPreset(page);
 
       return page.pdf({
-        format: options.format || 'A4',
-        landscape: options.landscape || false,
-        scale: options.scale || 1,
+        format,
+        landscape,
+        scale: pdfScale,
         printBackground: options.printBackground ?? true,
         margin: {
           top: options.marginTop || '80px',
-          right: options.marginRight || '40px',
+          right: marginRight + 'px',
           bottom: options.marginBottom || '80px',
-          left: options.marginLeft || '40px',
+          left: marginLeft + 'px',
         },
         displayHeaderFooter: options.displayHeaderFooter ?? true,
         headerTemplate: buildHeaderTemplate(headerFooter),
@@ -63,23 +52,17 @@ export const htmlToPdf = async (req, res) => {
       });
     });
 
-    // Lưu file nếu user đã đăng nhập
     if (req.user?._id) {
-      const filePath = path.join(UPLOADS_DIR, `${req.user?._id}-${Date.now()}.pdf`);
+      const filePath = path.join(UPLOADS_DIR, `${req.user._id}-${Date.now()}.pdf`);
       fs.writeFileSync(filePath, pdfBuffer);
-      await ConversionHistory.create({
-        userId: req.user?._id,
-        type: 'html-to-pdf',
-        filename,
-        filePath,
-      });
+      await saveHistory(req.user._id, 'html-to-pdf', filename, filePath);
     }
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(pdfBuffer);
   } catch (error) {
-    console.error('Error htmlToPdf', error);
+    console.error('[htmlToPdf] error:', error.message);
     res.status(500).json({ message: 'PDF generation failed' });
   }
 };

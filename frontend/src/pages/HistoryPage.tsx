@@ -124,11 +124,11 @@ const HistoryPage: React.FC = () => {
 
       <div className="root">
         <header className="header">
-          <a href="/" className="header-logo">⬛ PDF.FORGE</a>
+          <a href="/" className="header-logo">CONVERT WEBPAGE</a>
           <nav className="nav">
             <a className="nav-link" href="/">URL → PDF</a>
-            <a className="nav-link" href="/html-to-pdf">HTML → PDF</a>
-            <a className="nav-link" href="/web-to-image">URL → Image</a>
+            <a className="nav-link" href="/htmltopdf">HTML → PDF</a>
+            <a className="nav-link" href="/webtoimg">URL → Image</a>
           </nav>
           <UserMenu />
         </header>
