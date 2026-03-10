@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router'
 import { useAuthStore } from '../stores/useAuthStore'
 import api from '../lib/axios'
-import UserMenu from '../components/Usermenu'
+import UserMenu from '../components/UserMenu'
 
 const API = 'http://localhost:5001/api'
 
