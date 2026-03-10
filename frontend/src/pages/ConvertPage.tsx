@@ -44,7 +44,6 @@ const ConvertPage: React.FC = () => {
     acceptCookies: true,
     removeHeader: false,
     removeFooter: false,
-    mobile: true,
   })
 
   /* ── Toast ── */
@@ -54,25 +53,35 @@ const ConvertPage: React.FC = () => {
   }
 
   /* ── Selector generator ── */
-  // doc: the iframe's document — needed to correctly detect root boundary
   const generateSelector = (el: HTMLElement, doc: Document): string => {
     const parts: string[] = []
     let node: HTMLElement | null = el
 
     while (node !== null && node !== doc.body && node !== doc.documentElement) {
-      // id is unique — stop here
-      if (node.id) {
-        parts.unshift('#' + CSS.escape(node.id))
-        break
+      // 1. id — most stable
+      if (node.id) { parts.unshift('#' + CSS.escape(node.id)); break }
+
+      // 2. Unique stable class combination
+      const stableClasses = Array.from(node.classList).filter(c =>
+        c.length > 2 && !/^(is-|has-|js-|active|hover|focus|open|visible|hidden|loading|selected|checked|disabled|iframe-)/.test(c)
+      )
+      if (stableClasses.length > 0) {
+        const classSel = node.tagName.toLowerCase() + '.' + stableClasses.map(c => CSS.escape(c)).join('.')
+        if (doc.querySelectorAll(classSel).length === 1) { parts.unshift(classSel); break }
       }
 
+      // 3. Unique data-* attribute
+      const dataAttr = Array.from(node.attributes).find(a => a.name.startsWith('data-') && a.value && a.value.length < 60)
+      if (dataAttr) {
+        const dataSel = `[${dataAttr.name}="${CSS.escape(dataAttr.value)}"]`
+        if (doc.querySelectorAll(dataSel).length === 1) { parts.unshift(dataSel); break }
+      }
+
+      // 4. Positional fallback
       const par = node.parentElement as HTMLElement | null
       if (!par) break
-
-      // Pure positional selector — immune to class name collisions
       const index = Array.from(par.children).indexOf(node) + 1
       parts.unshift(`${node.tagName.toLowerCase()}:nth-child(${index})`)
-
       node = par
     }
 
@@ -161,7 +170,7 @@ const ConvertPage: React.FC = () => {
     setIsBlockMode(false)
 
     try {
-      const { data } = await api.post(`${API}/preview`, { url, mobile: options.mobile })
+      const { data } = await api.post(`${API}/preview`, { url, mobile: true })
       const htmlRes = await api.get(`${API}/preview/${data.previewId}`)
       setPreviewHtml(htmlRes.data)
       showToast('Preview loaded')
@@ -183,27 +192,32 @@ const ConvertPage: React.FC = () => {
       if (previewHtml && iframeRef.current?.contentDocument) {
         const iframeDoc = iframeRef.current.contentDocument
 
-        // Remove hover highlight from any element still highlighted
+        // Clean up preview-only UI artifacts
         iframeDoc.querySelectorAll('.iframe-hover-highlight')
           .forEach(el => el.classList.remove('iframe-hover-highlight'))
 
-        // Replace blocker styles: keep only the hide rule, strip the red UI styles
-        const blockerStyle = iframeDoc.getElementById('BLOCKER_STYLES_INJECTED')
-        if (blockerStyle) blockerStyle.textContent = '.iframe-blocked { display: none !important; }'
+        // Convert iframe-blocked class → inline display:none
+        // (class-based hiding can interact badly with injectPdfPreset;
+        //  inline style is reliably preserved in outerHTML and handled correctly)
+        iframeDoc.querySelectorAll('.iframe-blocked').forEach(el => {
+          ;(el as HTMLElement).style.setProperty('display', 'none', 'important')
+          el.classList.remove('iframe-blocked')
+        })
+
+        // Remove the blocker style tag entirely (no longer needed)
+        iframeDoc.getElementById('BLOCKER_STYLES_INJECTED')?.remove()
 
         const liveHtml = '<!DOCTYPE html>\n' + iframeDoc.documentElement.outerHTML
         const viewportWidth = iframeRef.current.offsetWidth
-
         response = await api.post(
           `${API}/html-to-pdf`,
-          { html: liveHtml, options, headerFooter, viewportWidth },
+          { html: liveHtml, options: { ...options, mobile: true }, headerFooter, viewportWidth },
           { responseType: 'blob', withCredentials: true }
         )
       } else {
-        // No preview loaded yet — fall back to URL-based export
         response = await api.post(
           `${API}/url-to-pdf`,
-          { url, options, blockedSelectors, headerFooter },
+          { url, options: { ...options, mobile: false }, blockedSelectors, headerFooter },
           { responseType: 'blob', withCredentials: true }
         )
       }
@@ -240,10 +254,6 @@ const ConvertPage: React.FC = () => {
 
   const opt = (key: keyof typeof options, val: unknown) => {
     setOptions(prev => ({ ...prev, [key]: val as never }))
-    if (key === 'mobile' && previewHtml) {
-      setPreviewHtml(null)
-      showToast('Reload preview to apply mobile mode')
-    }
   }
 
   /* ── Logo upload ── */
@@ -845,10 +855,6 @@ const ConvertPage: React.FC = () => {
                 <div className="opt-group">
                   <div className="opt-group-label">Behaviour</div>
                   <div className="opt-row">
-                    <span className="opt-label">Mobile View</span>
-                    <button className={`opt-toggle ${options.mobile ? 'on' : ''}`} onClick={() => opt('mobile', !options.mobile)} />
-                  </div>
-                  <div className="opt-row">
                     <span className="opt-label">Accept Cookies</span>
                     <button className={`opt-toggle ${options.acceptCookies ? 'on' : ''}`} onClick={() => opt('acceptCookies', !options.acceptCookies)} />
                   </div>
@@ -936,7 +942,7 @@ const ConvertPage: React.FC = () => {
                   srcDoc={previewHtml}
                   sandbox="allow-same-origin"
                   className="preview-iframe"
-                  style={options.mobile ? { width: '390px', margin: '0 auto', display: 'block' } : undefined}
+                  style={{ width: '390px', margin: '0 auto', display: 'block' }}
                   title="Preview"
                 />
               </div>

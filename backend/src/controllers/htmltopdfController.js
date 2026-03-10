@@ -4,7 +4,7 @@ import path from 'path';
 import { withBrowser } from '../libs/puppeteerUtils.js';
 import { buildHeaderTemplate, buildFooterTemplate } from '../libs/pdfTemplates.js';
 import { saveHistory, UPLOADS_DIR } from '../libs/fileUtils.js';
-import { MOBILE_UA, MOBILE_VP, PAPER_W, PAPER_H, injectPdfPreset } from '../libs/pdfUtils.js';
+import { MOBILE_UA, MOBILE_VP, PAPER_W, PAPER_H, injectPdfStyles, removeBlankPages } from '../libs/pdfUtils.js';
 
 export const htmlToPdf = async (req, res) => {
   const { html, options = {}, headerFooter } = req.body;
@@ -33,9 +33,9 @@ export const htmlToPdf = async (req, res) => {
       await page.setViewport({ width: vpWidth, height: 900, deviceScaleFactor: 1 });
       await page.setContent(html, { waitUntil: 'networkidle2', timeout: 60_000 });
 
-      await injectPdfPreset(page);
+      await injectPdfStyles(page);
 
-      return page.pdf({
+      const raw = await page.pdf({
         format,
         landscape,
         scale: pdfScale,
@@ -50,6 +50,7 @@ export const htmlToPdf = async (req, res) => {
         headerTemplate: buildHeaderTemplate(headerFooter),
         footerTemplate: buildFooterTemplate(headerFooter ?? {}, currentDate),
       });
+      return removeBlankPages(raw);
     });
 
     if (req.user?._id) {

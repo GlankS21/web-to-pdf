@@ -5,7 +5,7 @@ import { withBrowser, gotoPage } from '../libs/puppeteerUtils.js';
 import { buildCSS, buildHeaderTemplate, buildFooterTemplate } from '../libs/pdfTemplates.js';
 import { createFilename, saveHistory, UPLOADS_DIR } from '../libs/fileUtils.js';
 import { toUrlPattern, setPreview, getPreviewHtml, saveSelectors, getSavedSelectors, saveHeaderFooter, getSavedHeaderFooter } from '../libs/convertMemory.js';
-import { MOBILE_UA, MOBILE_VP, PAPER_W, PAPER_H, injectPdfPreset } from '../libs/pdfUtils.js';
+import { MOBILE_UA, MOBILE_VP, PAPER_W, PAPER_H, injectPdfPreset, disableAnimationsOnNewDocument, removeBlankPages } from '../libs/pdfUtils.js';
 
 // ─── Preview ──────────────────────────────────────────────────────────────────
 
@@ -154,10 +154,20 @@ export const urlToPdf = async (req, res) => {
         Object.defineProperty(navigator, 'plugins', { get: () => [{ name: 'Chrome PDF Plugin' }] });
       });
 
+      await disableAnimationsOnNewDocument(page);
+
       await page.setExtraHTTPHeaders({
         'Accept-Language': 'en-US,en;q=0.9',
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
       });
+
+      // Calculate paper dimensions first so viewport matches A4 content width
+      const format      = options.format || 'A4';
+      const landscape   = options.landscape || false;
+      const marginLeft  = parseInt(options.marginLeft  || '40') || 40;
+      const marginRight = parseInt(options.marginRight || '40') || 40;
+      const paperW      = landscape ? (PAPER_H[format] ?? 1123) : (PAPER_W[format] ?? 794);
+      const contentW    = Math.max(paperW - marginLeft - marginRight, 200);
 
       if (options.mobile) {
         await page.setUserAgent(MOBILE_UA);
@@ -190,15 +200,9 @@ export const urlToPdf = async (req, res) => {
       const pageTitle = await page.title();
       const currentDate = new Date().toLocaleDateString();
 
-      const format      = options.format || 'A4';
-      const landscape   = options.landscape || false;
-      const marginLeft  = parseInt(options.marginLeft  || '40') || 40;
-      const marginRight = parseInt(options.marginRight || '40') || 40;
-      const paperW      = landscape ? (PAPER_H[format] ?? 1123) : (PAPER_W[format] ?? 794);
-      const contentW    = Math.max(paperW - marginLeft - marginRight, 200);
-      const pdfScale    = options.mobile ? Math.min(contentW / MOBILE_VP, 2) : (options.scale || 1.0);
+      const pdfScale = options.mobile ? Math.min(contentW / MOBILE_VP, 2) : (options.scale || 1.0);
 
-      return page.pdf({
+      const raw = await page.pdf({
         format,
         landscape,
         scale: pdfScale,
@@ -213,6 +217,7 @@ export const urlToPdf = async (req, res) => {
         headerTemplate: buildHeaderTemplate(hfConfig ?? { headerText: pageTitle }),
         footerTemplate: buildFooterTemplate(hfConfig ?? {}, currentDate),
       });
+      return removeBlankPages(raw);
     }, {
       extraArgs: ['--disable-blink-features=AutomationControlled', '--disable-dev-shm-usage'],
     });

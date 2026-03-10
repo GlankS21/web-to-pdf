@@ -1,30 +1,47 @@
 import fs from 'fs';
 import path from 'path';
-import { withBrowser, loadPage } from '../libs/puppeteerUtils.js';
+import { withBrowser, gotoPage } from '../libs/puppeteerUtils.js';
 import { saveHistory, UPLOADS_DIR } from '../libs/fileUtils.js';
-import { MOBILE_UA, MOBILE_VP } from '../libs/pdfUtils.js';
+import { MOBILE_UA, MOBILE_VP, injectPdfStyles, disableAnimationsOnNewDocument } from '../libs/pdfUtils.js';
 
 const MIME = { png: 'image/png', jpeg: 'image/jpeg', webp: 'image/webp' };
 
 export const urlToImage = async (req, res) => {
-  const { url, options = {}, blockedSelectors = [] } = req.body;
-  if (!url) return res.status(400).json({ message: 'url is required' });
+  const { url, html, options = {}, blockedSelectors = [] } = req.body;
+  if (!url && !html) return res.status(400).json({ message: 'url or html is required' });
 
   const format   = options.format   || 'png';
-  const width    = options.mobile ? MOBILE_VP : (options.width  || 1600);
-  const height   = options.mobile ? 844        : (options.height || 900);
+  const mobile   = options.mobile ?? false;
+  const width    = mobile ? MOBILE_VP : (options.width  || 1600);
+  const height   = mobile ? 844        : (options.height || 900);
   const fullPage = options.fullPage ?? true;
   const quality  = options.quality  || 90;
 
   try {
-    const hostname = new URL(url).hostname.replace(/^www\./, '').split('.')[0];
+    const hostname = html
+      ? 'html-export'
+      : new URL(url).hostname.replace(/^www\./, '').split('.')[0];
     const filename = options.filename || `${hostname}-${Date.now()}.${format}`;
 
     const imageBuffer = await withBrowser(
       async (_browser, page) => {
-        if (options.mobile) await page.setUserAgent(MOBILE_UA);
-        await loadPage(page, url);
+        if (mobile) await page.setUserAgent(MOBILE_UA);
 
+        if (html) {
+          // Preview HTML path — screenshot the already-rendered preview DOM
+          await page.emulateMediaType('screen');
+          await page.setContent(html, { waitUntil: 'networkidle2', timeout: 60_000 });
+        } else {
+          // Direct URL path — navigate live with animation/chrome suppression
+          await disableAnimationsOnNewDocument(page);
+          await page.setExtraHTTPHeaders({
+            'Accept-Language': 'en-US,en;q=0.9',
+            Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          });
+          await gotoPage(page, url);
+        }
+
+        // Apply user-blocked selectors
         if (blockedSelectors.length > 0) {
           await page.evaluate((selectors) => {
             selectors.forEach((sel) => {
@@ -34,6 +51,9 @@ export const urlToImage = async (req, res) => {
           }, blockedSelectors);
           await new Promise((r) => setTimeout(r, 300));
         }
+
+        // Auto-hide navbars, cookie banners, chat widgets, etc.
+        await injectPdfStyles(page);
 
         return page.screenshot({
           type: format,

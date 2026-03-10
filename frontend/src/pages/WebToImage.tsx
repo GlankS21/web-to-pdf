@@ -24,7 +24,6 @@ const WebToImagePage: React.FC = () => {
     fullPage: true,
     width: 1600,
     height: 900,
-    mobile: false,
   })
 
   const showToast = (msg: string, type: 'ok' | 'err' = 'ok') => {
@@ -34,17 +33,38 @@ const WebToImagePage: React.FC = () => {
 
   const opt = (key: keyof typeof options, val: unknown) => {
     setOptions(prev => ({ ...prev, [key]: val as never }))
-    if (key === 'mobile' && previewHtml) {
-      setPreviewHtml(null)
-      showToast('Reload preview to apply mobile mode')
-    }
   }
 
   const generateSelector = (el: HTMLElement, doc: Document): string => {
     const parts: string[] = []
     let node: HTMLElement | null = el
     while (node !== null && node !== doc.body && node !== doc.documentElement) {
+      // Prefer id — most stable
       if (node.id) { parts.unshift('#' + CSS.escape(node.id)); break }
+
+      // Prefer a stable class combination that uniquely identifies the element
+      const stableClasses = Array.from(node.classList).filter(c =>
+        c.length > 2 && !/^(is-|has-|js-|active|hover|focus|open|visible|hidden|loading|selected|checked|disabled)/.test(c)
+      )
+      if (stableClasses.length > 0) {
+        const classSel = node.tagName.toLowerCase() + '.' + stableClasses.map(c => CSS.escape(c)).join('.')
+        if (doc.querySelectorAll(classSel).length === 1) {
+          parts.unshift(classSel)
+          break
+        }
+      }
+
+      // Fall back to data attribute if present
+      const dataKey = Array.from(node.attributes).find(a => a.name.startsWith('data-') && a.value && a.value.length < 60)
+      if (dataKey) {
+        const dataSel = `[${dataKey.name}="${CSS.escape(dataKey.value)}"]`
+        if (doc.querySelectorAll(dataSel).length === 1) {
+          parts.unshift(dataSel)
+          break
+        }
+      }
+
+      // Last resort: positional (least stable across static vs JS-rendered DOM)
       const par = node.parentElement as HTMLElement | null
       if (!par) break
       const index = Array.from(par.children).indexOf(node) + 1
@@ -101,7 +121,7 @@ const WebToImagePage: React.FC = () => {
     setBlockedSelectors([])
     setIsBlockMode(false)
     try {
-      const { data } = await api.post(`${API}/preview`, { url, mobile: options.mobile })
+      const { data } = await api.post(`${API}/preview`, { url, mobile: true })
       const htmlRes = await api.get(`${API}/preview/${data.previewId}`)
       setPreviewHtml(htmlRes.data)
       showToast('Preview loaded')
@@ -116,9 +136,28 @@ const WebToImagePage: React.FC = () => {
     if (!url) return showToast('Enter a URL first', 'err')
     setLoading('capture')
     try {
+      let body: Record<string, unknown>
+
+      if (previewHtml && iframeRef.current) {
+        // Preview path — screenshot the preview HTML (same as html-to-pdf approach)
+        const iframeDoc = iframeRef.current.contentDocument
+        if (iframeDoc) {
+          iframeDoc.querySelectorAll('.iframe-blocked').forEach((el) => {
+            ;(el as HTMLElement).style.setProperty('display', 'none', 'important')
+            el.classList.remove('iframe-blocked')
+          })
+          iframeDoc.getElementById('BLOCKER_STYLES_INJECTED')?.remove()
+        }
+        const liveHtml = '<!DOCTYPE html>\n' + (iframeDoc?.documentElement.outerHTML ?? '')
+        body = { url, html: liveHtml, options: { ...options, mobile: true }, blockedSelectors }
+      } else {
+        // Direct capture — desktop view, backend handles auto-blocking
+        body = { url, options: { ...options, mobile: false }, blockedSelectors }
+      }
+
       const response = await api.post(
         `${API}/url-to-image`,
-        { url, options, blockedSelectors },
+        body,
         { responseType: 'blob', withCredentials: true }
       )
       const blob = new Blob([response.data], { type: `image/${options.format}` })
@@ -332,7 +371,7 @@ const WebToImagePage: React.FC = () => {
               </div>
               <div>
                 <div className="opt-group">
-                  <div className="opt-group-label">Viewport</div>
+                  <div className="opt-group-label">Viewport (direct capture only)</div>
                   <div className="opt-row">
                     <span className="opt-label">Width</span>
                     <input className="opt-input" type="number" value={options.width} onChange={e => opt('width', parseInt(e.target.value))} />
@@ -344,10 +383,6 @@ const WebToImagePage: React.FC = () => {
                   <div className="opt-row">
                     <span className="opt-label">Full page</span>
                     <button className={`opt-toggle ${options.fullPage ? 'on' : ''}`} onClick={() => opt('fullPage', !options.fullPage)} />
-                  </div>
-                  <div className="opt-row">
-                    <span className="opt-label">Mobile View</span>
-                    <button className={`opt-toggle ${options.mobile ? 'on' : ''}`} onClick={() => opt('mobile', !options.mobile)} />
                   </div>
                 </div>
               </div>
@@ -396,7 +431,7 @@ const WebToImagePage: React.FC = () => {
                   srcDoc={previewHtml}
                   sandbox="allow-same-origin"
                   className="preview-iframe"
-                  style={options.mobile ? { width: '390px', margin: '0 auto', display: 'block' } : undefined}
+                  style={{ width: '390px', margin: '0 auto', display: 'block' }}
                   title="Preview"
                 />
               </div>
