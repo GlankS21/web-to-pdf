@@ -2,7 +2,8 @@ import UserMenu from '../components/UserMenu'
 import React, { useState, useMemo } from 'react'
 import api from '../lib/axios'
 
-const API = 'http://localhost:5001/api/convert'
+const BASE = import.meta.env.MODE === 'development' ? 'http://localhost:5001/api' : 'https://web-to-pdf-v6o5.onrender.com/api'
+const API = `${BASE}/convert`
 
 const HtmlToPdfPage: React.FC = () => {
   const [mode, setMode] = useState<'paste' | 'upload'>('paste')
