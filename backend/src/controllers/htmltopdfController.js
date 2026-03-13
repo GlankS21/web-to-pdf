@@ -4,10 +4,10 @@ import path from 'path';
 import { withBrowser } from '../libs/puppeteerUtils.js';
 import { buildHeaderTemplate, buildFooterTemplate } from '../libs/pdfTemplates.js';
 import { saveHistory, UPLOADS_DIR } from '../libs/fileUtils.js';
-import { MOBILE_UA, MOBILE_VP, PAPER_W, PAPER_H, injectPdfStyles, removeBlankPages } from '../libs/pdfUtils.js';
+import { MOBILE_UA, MOBILE_VP, PAPER_W, PAPER_H, removeBlankPages } from '../libs/pdfUtils.js';
 
 export const htmlToPdf = async (req, res) => {
-  const { html, options = {}, headerFooter } = req.body;
+  const { html, options = {}, headerFooter, viewportWidth } = req.body;
   if (!html?.trim()) return res.status(400).json({ message: 'html is required' });
 
   try {
@@ -22,7 +22,7 @@ export const htmlToPdf = async (req, res) => {
 
     const paperW   = landscape ? (PAPER_H[format] ?? 1123) : (PAPER_W[format] ?? 794);
     const contentW = Math.max(paperW - marginLeft - marginRight, 200);
-    const vpWidth  = mobile ? MOBILE_VP : contentW;
+    const vpWidth  = viewportWidth || (mobile ? MOBILE_VP : contentW);
     const pdfScale = mobile ? Math.min(contentW / MOBILE_VP, 2) : (options.scale || 1);
 
     console.log(`[htmlToPdf] format=${format} mobile=${mobile} vpWidth=${vpWidth} scale=${pdfScale}`);
@@ -33,7 +33,20 @@ export const htmlToPdf = async (req, res) => {
       await page.setViewport({ width: vpWidth, height: 900, deviceScaleFactor: 1 });
       await page.setContent(html, { waitUntil: 'networkidle2', timeout: 60_000 });
 
-      await injectPdfStyles(page);
+      await page.addStyleTag({
+        content: `
+          *, *::before, *::after {
+            transition: none !important;
+            animation: none !important;
+            color-adjust: exact !important;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+          html, body {
+            background: #ffffff !important;
+          }
+        `,
+      });
 
       const raw = await page.pdf({
         format,

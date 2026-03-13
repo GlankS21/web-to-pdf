@@ -8,11 +8,6 @@ export interface Viewport {
 }
 
 export interface PdfOptions {
-  styleTemplate?: 'modern' | 'minimal' | 'professional' | 'magazine';
-  customCSS?: string;
-  cleanMode?: boolean;
-  mainContentOnly?: boolean;
-  removeElements?: string[];
   format?: 'A4' | 'A3' | 'A5' | 'Letter' | 'Legal' | 'Tabloid';
   landscape?: boolean;
   printBackground?: boolean;

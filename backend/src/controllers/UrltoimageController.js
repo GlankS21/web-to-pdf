@@ -13,56 +13,47 @@ export const urlToImage = async (req, res) => {
   const format   = options.format   || 'png';
   const mobile   = options.mobile ?? false;
   const width    = mobile ? MOBILE_VP : (options.width  || 1600);
-  const height   = mobile ? 844        : (options.height || 900);
+  const height   = mobile ? 844       : (options.height || 900);
   const fullPage = options.fullPage ?? true;
   const quality  = options.quality  || 90;
 
   try {
-    const hostname = html
-      ? 'html-export'
-      : new URL(url).hostname.replace(/^www\./, '').split('.')[0];
+    const hostname = html ? 'html-export' : new URL(url).hostname.replace(/^www\./, '').split('.')[0];
     const filename = options.filename || `${hostname}-${Date.now()}.${format}`;
 
-    const imageBuffer = await withBrowser(
-      async (_browser, page) => {
-        if (mobile) await page.setUserAgent(MOBILE_UA);
+    const imageBuffer = await withBrowser(async (_browser, page) => {
+      if (mobile) await page.setUserAgent(MOBILE_UA);
 
-        if (html) {
-          // Preview HTML path — screenshot the already-rendered preview DOM
-          await page.emulateMediaType('screen');
-          await page.setContent(html, { waitUntil: 'networkidle2', timeout: 60_000 });
-        } else {
-          // Direct URL path — navigate live with animation/chrome suppression
-          await disableAnimationsOnNewDocument(page);
-          await page.setExtraHTTPHeaders({
-            'Accept-Language': 'en-US,en;q=0.9',
-            Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-          });
-          await gotoPage(page, url);
-        }
-
-        // Apply user-blocked selectors
-        if (blockedSelectors.length > 0) {
-          await page.evaluate((selectors) => {
-            selectors.forEach((sel) => {
-              document.querySelectorAll(sel).forEach((el) =>
-                el.style.setProperty('display', 'none', 'important'));
-            });
-          }, blockedSelectors);
-          await new Promise((r) => setTimeout(r, 300));
-        }
-
-        // Auto-hide navbars, cookie banners, chat widgets, etc.
-        await injectPdfStyles(page);
-
-        return page.screenshot({
-          type: format,
-          fullPage,
-          ...(format !== 'png' ? { quality } : {}),
+      if (html) {
+        await page.emulateMediaType('screen');
+        await page.setContent(html, { waitUntil: 'networkidle2', timeout: 60_000 });
+      } else {
+        await disableAnimationsOnNewDocument(page);
+        await page.setExtraHTTPHeaders({
+          'Accept-Language': 'en-US,en;q=0.9',
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
         });
-      },
-      { viewport: { width, height } }
-    );
+        await gotoPage(page, url);
+      }
+
+      if (blockedSelectors.length > 0) {
+        await page.evaluate((selectors) => {
+          selectors.forEach((sel) => {
+            document.querySelectorAll(sel).forEach((el) =>
+              el.style.setProperty('display', 'none', 'important'));
+          });
+        }, blockedSelectors);
+        await new Promise((r) => setTimeout(r, 300));
+      }
+
+      if (!html) await injectPdfStyles(page);
+
+      return page.screenshot({
+        type: format,
+        fullPage,
+        ...(format !== 'png' ? { quality } : {}),
+      });
+    }, { viewport: { width, height } });
 
     if (req.user?._id) {
       const filePath = path.join(UPLOADS_DIR, `${req.user._id}-${Date.now()}.${format}`);

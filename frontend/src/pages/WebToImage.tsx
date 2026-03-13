@@ -431,7 +431,7 @@ const WebToImagePage: React.FC = () => {
                   srcDoc={previewHtml}
                   sandbox="allow-same-origin"
                   className="preview-iframe"
-                  style={{ width: '390px', margin: '0 auto', display: 'block' }}
+                  style={{ width: '480px', margin: '0 auto', display: 'block' }}
                   title="Preview"
                 />
               </div>

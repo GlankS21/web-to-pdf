@@ -42,8 +42,6 @@ const ConvertPage: React.FC = () => {
     marginLeft: '40px',
     displayHeaderFooter: true,
     acceptCookies: true,
-    removeHeader: false,
-    removeFooter: false,
   })
 
   /* ── Toast ── */
@@ -114,11 +112,6 @@ const ConvertPage: React.FC = () => {
     return () => clearTimeout(t)
   }, [url, fetchSuggestions])
 
-  /* ── Sync blockedSelectors → customCSS ── */
-  useEffect(() => {
-    if (!blockedSelectors.length) return
-    // customCSS is derived, no extra state needed — sent as-is on PDF call
-  }, [blockedSelectors])
 
   /* ── Block mode listeners ── */
   useEffect(() => {
@@ -858,14 +851,6 @@ const ConvertPage: React.FC = () => {
                     <span className="opt-label">Accept Cookies</span>
                     <button className={`opt-toggle ${options.acceptCookies ? 'on' : ''}`} onClick={() => opt('acceptCookies', !options.acceptCookies)} />
                   </div>
-                  <div className="opt-row">
-                    <span className="opt-label">Remove Header</span>
-                    <button className={`opt-toggle ${options.removeHeader ? 'on' : ''}`} onClick={() => opt('removeHeader', !options.removeHeader)} />
-                  </div>
-                  <div className="opt-row">
-                    <span className="opt-label">Remove Footer</span>
-                    <button className={`opt-toggle ${options.removeFooter ? 'on' : ''}`} onClick={() => opt('removeFooter', !options.removeFooter)} />
-                  </div>
                 </div>
                 <div className="opt-group">
                   <div className="opt-group-label">Header / Footer</div>
@@ -942,7 +927,7 @@ const ConvertPage: React.FC = () => {
                   srcDoc={previewHtml}
                   sandbox="allow-same-origin"
                   className="preview-iframe"
-                  style={{ width: '390px', margin: '0 auto', display: 'block' }}
+                  style={{ width: '480px', margin: '0 auto', display: 'block' }}
                   title="Preview"
                 />
               </div>

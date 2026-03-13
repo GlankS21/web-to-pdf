@@ -11,16 +11,6 @@ if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 export const createFilename = (url) => new URL(url).hostname.replace(/^www\./, '').split('.')[0] + '.pdf';
 
-export const loadCSS = (filename) => {
-  const filePath = path.join(__dirname, '../config', filename);
-  try {
-    return fs.readFileSync(filePath, 'utf-8');
-  } catch (error) {
-    console.error(`Failed to load CSS: ${filename}`, error);
-    return '';
-  }
-};
-
 export const saveHistory = async (userId, type, filename, filePath, sourceUrl = null) => {
   if (!userId) return;
   try {

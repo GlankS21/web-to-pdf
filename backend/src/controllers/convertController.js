@@ -2,12 +2,10 @@ import fs from 'fs';
 import path from 'path';
 
 import { withBrowser, gotoPage } from '../libs/puppeteerUtils.js';
-import { buildCSS, buildHeaderTemplate, buildFooterTemplate } from '../libs/pdfTemplates.js';
+import { buildHeaderTemplate, buildFooterTemplate } from '../libs/pdfTemplates.js';
 import { createFilename, saveHistory, UPLOADS_DIR } from '../libs/fileUtils.js';
 import { toUrlPattern, setPreview, getPreviewHtml, saveSelectors, getSavedSelectors, saveHeaderFooter, getSavedHeaderFooter } from '../libs/convertMemory.js';
 import { MOBILE_UA, MOBILE_VP, PAPER_W, PAPER_H, injectPdfPreset, disableAnimationsOnNewDocument, removeBlankPages } from '../libs/pdfUtils.js';
-
-// ─── Preview ──────────────────────────────────────────────────────────────────
 
 export const previewWebsite = async (req, res) => {
   const { url, mobile } = req.body;
@@ -18,11 +16,11 @@ export const previewWebsite = async (req, res) => {
 
     const html = await withBrowser(async (_browser, page) => {
       if (mobile) await page.setUserAgent(MOBILE_UA);
+
       await gotoPage(page, url);
       await acceptCookies(page);
       await new Promise((r) => setTimeout(r, 2_000));
 
-      // Absolutize all resource URLs so they resolve from the iframe
       await page.evaluate((baseUrl) => {
         const abs = (u) => {
           if (!u || u.startsWith('data:') || u.startsWith('blob:') || u.startsWith('#')) return u;
@@ -35,7 +33,6 @@ export const previewWebsite = async (req, res) => {
         document.head.insertBefore(base, document.head.firstChild);
 
         document.querySelectorAll('link[href]').forEach((l) => { if (l.href) l.href = abs(l.href); });
-
         document.querySelectorAll('img[src]').forEach((img) => { img.src = abs(img.src); });
         document.querySelectorAll('img[srcset], source[srcset]').forEach((el) => {
           el.srcset = el.srcset
@@ -51,12 +48,34 @@ export const previewWebsite = async (req, res) => {
           ));
         });
 
+        document.querySelectorAll('style').forEach((style) => {
+          style.textContent = style.textContent.replace(
+            /url\(['"]?([^'")]+)['"]?\)/g, (_m, u) => `url('${abs(u)}')`
+          );
+        });
+
+        document.querySelectorAll('*').forEach((el) => {
+          const s = window.getComputedStyle(el);
+          if (s.display === 'none') {
+            el.style.setProperty('display', 'none', 'important');
+          } else if (s.visibility === 'hidden') {
+            el.style.setProperty('visibility', 'hidden', 'important');
+          } else if (s.opacity === '0') {
+            el.style.setProperty('opacity', '0', 'important');
+          } else if (
+            s.overflow === 'hidden' &&
+            el.scrollHeight > el.clientHeight &&
+            el.clientHeight < 5
+          ) {
+            el.style.setProperty('display', 'none', 'important');
+          }
+        });
+
         document.querySelectorAll('script').forEach((s) => s.remove());
         document.querySelectorAll('a[href]').forEach((a) => (a.href = 'javascript:void(0)'));
         document.querySelectorAll('form').forEach((f) => f.setAttribute('action', 'javascript:void(0)'));
       }, url);
 
-      // Inject block-mode highlight styles
       await page.evaluate(() => {
         const style = document.createElement('style');
         style.id = 'BLOCKER_STYLES_INJECTED';
@@ -73,7 +92,6 @@ export const previewWebsite = async (req, res) => {
         document.head.appendChild(style);
       });
 
-      // Fix viewport meta for mobile iframe rendering
       if (mobile) {
         await page.evaluate(() => {
           let vp = document.querySelector('meta[name="viewport"]');
@@ -82,7 +100,7 @@ export const previewWebsite = async (req, res) => {
             vp.setAttribute('name', 'viewport');
             document.head.insertBefore(vp, document.head.firstChild);
           }
-          vp.setAttribute('content', 'width=390, initial-scale=1');
+          vp.setAttribute('content', 'width=480, initial-scale=1');
         });
       }
 
@@ -108,8 +126,6 @@ export const getPreview = (req, res) => {
   res.send(html);
 };
 
-// ─── Suggestions ──────────────────────────────────────────────────────────────
-
 export const getSuggestedHeaderFooter = (req, res) => {
   const { url } = req.query;
   if (!url) return res.status(400).json({ error: 'url query param is required' });
@@ -126,8 +142,6 @@ export const getSuggestedSelectors = (req, res) => {
   const selectors = getSavedSelectors(sessionId, url);
   res.json({ selectors, pattern: toUrlPattern(url) });
 };
-
-// ─── URL → PDF ────────────────────────────────────────────────────────────────
 
 export const urlToPdf = async (req, res) => {
   const { url, options = {}, blockedSelectors = [], headerFooter } = req.body;
@@ -161,7 +175,6 @@ export const urlToPdf = async (req, res) => {
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
       });
 
-      // Calculate paper dimensions first so viewport matches A4 content width
       const format      = options.format || 'A4';
       const landscape   = options.landscape || false;
       const marginLeft  = parseInt(options.marginLeft  || '40') || 40;
@@ -189,17 +202,10 @@ export const urlToPdf = async (req, res) => {
         await new Promise((r) => setTimeout(r, 800));
       }
 
-      const customCSS = buildCSS(options);
-      if (customCSS) {
-        await page.addStyleTag({ content: customCSS });
-        await new Promise((r) => setTimeout(r, 1_000));
-      }
-
       await injectPdfPreset(page);
 
       const pageTitle = await page.title();
       const currentDate = new Date().toLocaleDateString();
-
       const pdfScale = options.mobile ? Math.min(contentW / MOBILE_VP, 2) : (options.scale || 1.0);
 
       const raw = await page.pdf({
@@ -238,8 +244,6 @@ export const urlToPdf = async (req, res) => {
     res.status(500).json({ error: 'Conversion failed', message: error.message });
   }
 };
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 const acceptCookies = async (page) => {
   try {

@@ -35,18 +35,13 @@ export const withBrowser = async (fn, { extraArgs = [], viewport } = {}) => {
   }
 };
 
-// Domains to block — slow or unreachable in restricted networks
 const BLOCKED_ORIGINS = [
-  'fonts.googleapis.com', 'fonts.gstatic.com',
   'accounts.google.com', 'apis.google.com',
   'www.google-analytics.com', 'analytics.google.com',
   'googletagmanager.com', 'www.googletagservices.com',
   'ssl.google-analytics.com', 'www.recaptcha.net', 'recaptcha.google.com',
   'connect.facebook.net', 'www.facebook.com',
   'platform.twitter.com', 'syndication.twitter.com',
-  'cdnjs.cloudflare.com', 'ajax.cloudflare.com',
-  'cdn.jsdelivr.net', 'unpkg.com',
-  'use.typekit.net', 'p.typekit.net',
   'mc.yandex.ru', 'counter.yadro.ru',
   'top-fwz1.mail.ru', 'top.mail.ru',
   'code.jivosite.com', 'widget.jivosite.com',
@@ -67,7 +62,6 @@ const enableBlocking = async (page) => {
 export const loadPage = async (page, url, { timeout = 60_000 } = {}) => {
   await enableBlocking(page);
 
-  // Navigate — try networkidle2, fall back to domcontentloaded
   try {
     await page.goto(url, { waitUntil: 'networkidle2', timeout });
     console.log('[load] networkidle2');
@@ -82,7 +76,6 @@ export const loadPage = async (page, url, { timeout = 60_000 } = {}) => {
     }
   }
 
-  // Wait for main-thread idle
   try {
     await page.evaluate(
       (ms) => new Promise((resolve) => {
@@ -95,7 +88,6 @@ export const loadPage = async (page, url, { timeout = 60_000 } = {}) => {
     );
   } catch (_) {}
 
-  // Scroll to trigger lazy-loaded content
   try {
     await page.evaluate(async () => {
       await new Promise((resolve) => {
@@ -112,7 +104,6 @@ export const loadPage = async (page, url, { timeout = 60_000 } = {}) => {
     });
   } catch (_) {}
 
-  // Wait for all images to finish loading
   try {
     await Promise.race([
       page.evaluate(() =>
@@ -131,7 +122,6 @@ export const loadPage = async (page, url, { timeout = 60_000 } = {}) => {
     console.log('[load] images loaded');
   } catch (_) {}
 
-  // Flush pending animation frames
   try {
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   } catch (_) {}
