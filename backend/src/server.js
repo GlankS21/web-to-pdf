@@ -15,7 +15,17 @@ const app = express();
 const PORT =  process.env.PORT || 5001;
 
 // middewares
-app.use(cors({origin: process.env.CLIENT_URL, credentials: true}));
+app.use(cors({
+  origin: (origin, cb) => {
+    const allowed = process.env.CLIENT_URL || '';
+    if (!origin || origin === allowed || origin.endsWith('.vercel.app')) {
+      cb(null, origin);
+    } else {
+      cb(new Error('CORS not allowed'));
+    }
+  },
+  credentials: true,
+}));
 app.use(express.json({ limit: '50mb' }))
 app.use(express.urlencoded({ limit: '50mb', extended: true }))
 app.use(cookieParser());
