@@ -104,6 +104,75 @@ export const previewWebsite = async (req, res) => {
         });
       }
 
+      // Inline @font-face fonts as base64 to avoid CORS issues in srcDoc iframe
+      await page.evaluate(async (baseUrl) => {
+        const abs = (u) => {
+          if (!u || u.startsWith('data:') || u.startsWith('blob:')) return u;
+          try { return new URL(u, baseUrl).href; } catch { return u; }
+        };
+
+        // Collect all @font-face rules from accessible stylesheets
+        const fontRules = [];
+        for (const sheet of document.styleSheets) {
+          try {
+            for (const rule of sheet.cssRules) {
+              if (rule instanceof CSSFontFaceRule) {
+                fontRules.push(rule.cssText);
+              }
+            }
+          } catch (_) {} // cross-origin sheets throw SecurityError
+        }
+
+        // Also fetch and parse cross-origin stylesheets (e.g. Google Fonts)
+        for (const link of document.querySelectorAll('link[rel="stylesheet"][href]')) {
+          const href = link.href;
+          if (!href || href.startsWith('data:')) continue;
+          // Check if we already read this sheet's rules above
+          let alreadyRead = false;
+          for (const sheet of document.styleSheets) {
+            try { if (sheet.href === href && sheet.cssRules) { alreadyRead = true; break; } } catch (_) {}
+          }
+          if (alreadyRead) continue;
+          try {
+            const cssText = await fetch(abs(href)).then((r) => r.ok ? r.text() : '');
+            const faces = cssText.match(/@font-face\s*\{[^}]+\}/gi) || [];
+            fontRules.push(...faces);
+          } catch (_) {}
+        }
+
+        if (!fontRules.length) return;
+
+        // For each font rule, fetch font URLs and convert to base64
+        const inlined = [];
+        for (const rule of fontRules) {
+          let css = rule;
+          const urlMatches = [...rule.matchAll(/url\(['"]?([^'")]+)['"]?\)/g)];
+          for (const [full, rawUrl] of urlMatches) {
+            if (rawUrl.startsWith('data:')) continue;
+            try {
+              const fontUrl = abs(rawUrl);
+              const resp = await fetch(fontUrl);
+              if (!resp.ok) continue;
+              const blob = await resp.blob();
+              const dataUrl = await new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.readAsDataURL(blob);
+              });
+              css = css.replace(full, `url('${dataUrl}')`);
+            } catch (_) {}
+          }
+          inlined.push(css);
+        }
+
+        if (inlined.length) {
+          const style = document.createElement('style');
+          style.id = 'INLINED_FONTS';
+          style.textContent = inlined.join('\n');
+          document.head.appendChild(style);
+        }
+      }, url);
+
       return page.content();
     }, mobile ? { viewport: { width: MOBILE_VP, height: 844 } } : {});
 
