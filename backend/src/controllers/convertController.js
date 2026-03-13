@@ -189,9 +189,6 @@ export const getPreview = (req, res) => {
   const html = getPreviewHtml(req.params.id);
   if (!html) return res.status(404).send('Preview not found or expired');
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.setHeader('Access-Control-Allow-Origin', process.env.CLIENT_URL);
-  res.setHeader('Access-Control-Allow-Methods', 'GET');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.send(html);
 };
 
