@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { withBrowser, gotoPage } from '../libs/puppeteerUtils.js';
-import { saveHistory, UPLOADS_DIR } from '../libs/fileUtils.js';
+import { saveHistory, UPLOADS_DIR } from '../libs/fileutils.js';
 import { MOBILE_UA, MOBILE_VP, injectPdfStyles, disableAnimationsOnNewDocument } from '../libs/pdfUtils.js';
 
 const MIME = { png: 'image/png', jpeg: 'image/jpeg', webp: 'image/webp' };

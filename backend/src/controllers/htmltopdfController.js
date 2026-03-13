@@ -2,8 +2,8 @@ import fs from 'fs';
 import path from 'path';
 
 import { withBrowser } from '../libs/puppeteerUtils.js';
-import { buildHeaderTemplate, buildFooterTemplate } from '../libs/pdfTemplates.js';
-import { saveHistory, UPLOADS_DIR } from '../libs/fileUtils.js';
+import { buildHeaderTemplate, buildFooterTemplate } from '../libs/pdftemplates.js';
+import { saveHistory, UPLOADS_DIR } from '../libs/fileutils.js';
 import { MOBILE_UA, MOBILE_VP, PAPER_W, PAPER_H, removeBlankPages } from '../libs/pdfUtils.js';
 
 export const htmlToPdf = async (req, res) => {

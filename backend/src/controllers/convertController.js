@@ -2,9 +2,9 @@ import fs from 'fs';
 import path from 'path';
 
 import { withBrowser, gotoPage } from '../libs/puppeteerUtils.js';
-import { buildHeaderTemplate, buildFooterTemplate } from '../libs/pdfTemplates.js';
-import { createFilename, saveHistory, UPLOADS_DIR } from '../libs/fileUtils.js';
-import { toUrlPattern, setPreview, getPreviewHtml, saveSelectors, getSavedSelectors, saveHeaderFooter, getSavedHeaderFooter } from '../libs/convertMemory.js';
+import { buildHeaderTemplate, buildFooterTemplate } from '../libs/pdftemplates.js';
+import { createFilename, saveHistory, UPLOADS_DIR } from '../libs/fileutils.js';
+import { toUrlPattern, setPreview, getPreviewHtml, saveSelectors, getSavedSelectors, saveHeaderFooter, getSavedHeaderFooter } from '../libs/convertmemory.js';
 import { MOBILE_UA, MOBILE_VP, PAPER_W, PAPER_H, injectPdfPreset, disableAnimationsOnNewDocument, removeBlankPages } from '../libs/pdfUtils.js';
 
 export const previewWebsite = async (req, res) => {
