@@ -11,16 +11,29 @@ export const previewWebsite = async (req, res) => {
   const { url, mobile } = req.body;
   if (!url) return res.status(400).json({ error: 'URL is required' });
 
+  // SSE streaming
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const send = (type, payload) => {
+    res.write(`data: ${JSON.stringify({ type, ...payload })}\n\n`);
+  };
+  const log = (msg) => { console.log(msg); send('log', { message: msg }); };
+
   try {
-    console.log(`[preview] ${url}${mobile ? ' (mobile)' : ''}`);
+    log(`[preview] ${url}${mobile ? ' (mobile)' : ''}`);
 
     const html = await withBrowser(async (_browser, page) => {
       if (mobile) await page.setUserAgent(MOBILE_UA);
 
-      await gotoPage(page, url);
+      await gotoPage(page, url, { log });
+      log('[preview] accepting cookies...');
       await acceptCookies(page);
       await new Promise((r) => setTimeout(r, 2_000));
 
+      log('[preview] processing HTML...');
       await page.evaluate((baseUrl) => {
         const abs = (u) => {
           if (!u || u.startsWith('data:') || u.startsWith('blob:') || u.startsWith('#')) return u;
@@ -104,6 +117,7 @@ export const previewWebsite = async (req, res) => {
         });
       }
 
+      log('[preview] inlining fonts...');
       // Inline @font-face fonts as base64 to avoid CORS issues in srcDoc iframe
       await page.evaluate(async (baseUrl) => {
         const abs = (u) => {
@@ -177,11 +191,13 @@ export const previewWebsite = async (req, res) => {
     }, mobile ? { viewport: { width: MOBILE_VP, height: 844 } } : {});
 
     const previewId = setPreview(html);
-    console.log(`[preview] cached ${previewId}`);
-    res.json({ previewId });
+    log(`[preview] cached → ${previewId}`);
+    send('done', { previewId });
+    res.end();
   } catch (error) {
     console.error('[preview] error:', error.message);
-    res.status(500).json({ error: 'Preview failed', message: error.message });
+    send('error', { message: error.message });
+    res.end();
   }
 };
 

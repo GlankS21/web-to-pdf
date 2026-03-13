@@ -15,6 +15,7 @@ const WebToImagePage: React.FC = () => {
   const [isBlockMode, setIsBlockMode] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [toast, setToast] = useState<{ msg: string; type: 'ok' | 'err' } | null>(null)
+  const [logs, setLogs] = useState<string[]>([])
 
   const iframeRef = useRef<HTMLIFrameElement>(null)
 
@@ -119,13 +120,48 @@ const WebToImagePage: React.FC = () => {
     setLoading('preview')
     setImageUrl(null)
     setImageBlob(null)
+    setPreviewHtml(null)
     setBlockedSelectors([])
     setIsBlockMode(false)
+    setLogs([])
+
     try {
-      const { data } = await api.post(`${API}/preview`, { url, mobile: true })
-      const htmlRes = await api.get(`${API}/preview/${data.previewId}`)
-      setPreviewHtml(htmlRes.data)
-      showToast('Preview loaded')
+      const response = await fetch(`${API}/preview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ url, mobile: true }),
+      })
+
+      const reader = response.body!.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let previewId = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n\n')
+        buffer = lines.pop() || ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const data = JSON.parse(line.slice(6))
+          if (data.type === 'log') {
+            setLogs(prev => [...prev, data.message])
+          } else if (data.type === 'done') {
+            previewId = data.previewId
+          } else if (data.type === 'error') {
+            throw new Error(data.message)
+          }
+        }
+      }
+
+      if (previewId) {
+        const htmlRes = await api.get(`${API}/preview/${previewId}`)
+        setPreviewHtml(htmlRes.data)
+        showToast('Preview loaded')
+      }
     } catch {
       showToast('Failed to load preview', 'err')
     } finally {
@@ -301,7 +337,7 @@ const WebToImagePage: React.FC = () => {
             />
             <button className="btn btn-preview" onClick={handleLoadPreview} disabled={!!loading}>
               {loading === 'preview' ? <span className="spinner" /> : '⊞'}
-              Preview
+              Edit Image
             </button>
             <button className="btn btn-capture" onClick={handleCapture} disabled={!!loading}>
               {loading === 'capture' ? <span className="spinner" /> : '⊡'}
@@ -410,12 +446,14 @@ const WebToImagePage: React.FC = () => {
 
           {/* Preview area */}
           <div className="preview-area">
-            {(previewHtml || imageUrl) && (
+            {(previewHtml || imageUrl || loading === 'preview') && (
               <div className="status-bar">
-                <span className={`status-dot ${previewHtml ? (isBlockMode ? 'block' : 'active') : 'active'}`} />
-                {previewHtml
-                  ? isBlockMode ? 'BLOCK MODE — click elements to hide' : 'PREVIEW'
-                  : `IMAGE OUTPUT — ${options.format.toUpperCase()}`}
+                <span className={`status-dot ${loading === 'preview' ? 'active' : previewHtml ? (isBlockMode ? 'block' : 'active') : 'active'}`} />
+                {loading === 'preview'
+                  ? (logs.length > 0 ? logs[logs.length - 1] : 'Connecting...')
+                  : previewHtml
+                    ? isBlockMode ? 'BLOCK MODE — click elements to hide' : 'PREVIEW'
+                    : `IMAGE OUTPUT — ${options.format.toUpperCase()}`}
               </div>
             )}
 

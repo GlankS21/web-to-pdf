@@ -59,19 +59,21 @@ const enableBlocking = async (page) => {
   page.on('request', (req) => (shouldBlock(req.url()) ? req.abort() : req.continue()));
 };
 
-export const loadPage = async (page, url, { timeout = 60_000 } = {}) => {
+export const loadPage = async (page, url, { timeout = 60_000, log } = {}) => {
+  const _log = (...args) => { console.log(...args); if (log) log(args.join(' ')); };
+
   await enableBlocking(page);
 
   try {
     await page.goto(url, { waitUntil: 'networkidle2', timeout });
-    console.log('[load] networkidle2');
+    _log('[load] networkidle2');
   } catch (_) {
-    console.warn('[load] networkidle2 timed out, falling back to domcontentloaded');
+    _log('[load] networkidle2 timed out, falling back to domcontentloaded');
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout });
-      console.log('[load] domcontentloaded');
+      _log('[load] domcontentloaded');
     } catch (e) {
-      console.error('[load] navigation failed:', e.message);
+      _log('[load] navigation failed:', e.message);
       throw e;
     }
   }
@@ -88,6 +90,7 @@ export const loadPage = async (page, url, { timeout = 60_000 } = {}) => {
     );
   } catch (_) {}
 
+  _log('[load] scrolling page...');
   try {
     await page.evaluate(async () => {
       await new Promise((resolve) => {
@@ -104,6 +107,7 @@ export const loadPage = async (page, url, { timeout = 60_000 } = {}) => {
     });
   } catch (_) {}
 
+  _log('[load] waiting for images & fonts...');
   try {
     await Promise.race([
       page.evaluate(() =>
@@ -119,7 +123,7 @@ export const loadPage = async (page, url, { timeout = 60_000 } = {}) => {
       ),
       new Promise((r) => setTimeout(r, 8_000)),
     ]);
-    console.log('[load] images loaded');
+    _log('[load] images loaded');
   } catch (_) {}
 
   try {
@@ -127,7 +131,7 @@ export const loadPage = async (page, url, { timeout = 60_000 } = {}) => {
   } catch (_) {}
 
   await new Promise((r) => setTimeout(r, 600));
-  console.log('[load] done');
+  _log('[load] done');
 };
 
-export const gotoPage = (page, url) => loadPage(page, url);
+export const gotoPage = (page, url, opts) => loadPage(page, url, opts);
