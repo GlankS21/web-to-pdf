@@ -11,18 +11,8 @@ export const previewWebsite = async (req, res) => {
   const { url, mobile } = req.body;
   if (!url) return res.status(400).json({ error: 'URL is required' });
 
-  // SSE streaming — disable proxy buffering
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no');
-  res.flushHeaders();
-
-  const send = (type, payload) => {
-    res.write(`data: ${JSON.stringify({ type, ...payload })}\n\n`);
-    if (typeof res.flush === 'function') res.flush();
-  };
-  const log = (msg) => { console.log(msg); send('log', { message: msg }); };
+  const logs = [];
+  const log = (msg) => { console.log(msg); logs.push(msg); };
 
   try {
     log(`[preview] ${url}${mobile ? ' (mobile)' : ''}`);
@@ -196,12 +186,10 @@ export const previewWebsite = async (req, res) => {
 
     const previewId = setPreview(html);
     log(`[preview] cached → ${previewId}`);
-    send('done', { previewId });
-    res.end();
+    res.json({ previewId, logs });
   } catch (error) {
     console.error('[preview] error:', error.message);
-    send('error', { message: error.message });
-    res.end();
+    res.status(500).json({ error: 'Preview failed', message: error.message, logs });
   }
 };
 

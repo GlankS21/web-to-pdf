@@ -156,7 +156,7 @@ const ConvertPage: React.FC = () => {
     else { iframe.onload = setup }
   }, [previewHtml, isBlockMode])
 
-  /* ── Load Preview (SSE streaming) ── */
+  /* ── Load Preview ── */
   const handleLoadPreview = async () => {
     if (!url) return showToast('Enter a URL first', 'err')
     setLoading('preview')
@@ -167,44 +167,17 @@ const ConvertPage: React.FC = () => {
     setLogs([])
 
     try {
-      const response = await fetch(`${API}/preview`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ url, mobile: true }),
-      })
-
-      const reader = response.body!.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let previewId = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n\n')
-        buffer = lines.pop() || ''
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const data = JSON.parse(line.slice(6))
-          if (data.type === 'log') {
-            setLogs(prev => [...prev, data.message])
-          } else if (data.type === 'done') {
-            previewId = data.previewId
-          } else if (data.type === 'error') {
-            throw new Error(data.message)
-          }
-        }
-      }
-
-      if (previewId) {
-        const htmlRes = await api.get(`${API}/preview/${previewId}`)
+      const { data } = await api.post(`${API}/preview`, { url, mobile: true })
+      if (data.logs) setLogs(data.logs)
+      if (data.previewId) {
+        const htmlRes = await api.get(`${API}/preview/${data.previewId}`)
         setPreviewHtml(htmlRes.data)
         showToast('Preview loaded')
       }
-    } catch {
-      showToast('Failed to load preview', 'err')
+    } catch (e: any) {
+      const logs = e.response?.data?.logs
+      if (logs) setLogs(logs)
+      showToast(e.response?.data?.message || 'Failed to load preview', 'err')
     } finally {
       setLoading(null)
     }
