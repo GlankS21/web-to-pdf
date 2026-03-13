@@ -1,7 +1,7 @@
 import express from 'express';
 import { urlToPdf, previewWebsite, getPreview, getSuggestedSelectors, getSuggestedHeaderFooter } from '../controllers/convertController.js';
 import { htmlToPdf } from '../controllers/htmltopdfController.js';
-import { urlToImage } from '../controllers/urltoimageController.js';
+import { urlToImage } from '../controllers/UrltoimageController.js';
 import { optionalAuth } from '../middlewares/optionalAuth.js'
 
 const router = express.Router();
