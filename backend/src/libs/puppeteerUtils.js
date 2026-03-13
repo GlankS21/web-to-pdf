@@ -3,8 +3,23 @@ import puppeteer from 'puppeteer-core';
 const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
-const launchBrowser = (extraArgs = []) =>
-  puppeteer.launch({
+const launchBrowser = async (extraArgs = []) => {
+  const fs = await import('fs');
+  let execPath = process.env.PUPPETEER_EXECUTABLE_PATH;
+  if (!execPath) {
+    if (process.platform === 'win32') {
+      const paths = [
+        'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+        'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+        (process.env.LOCALAPPDATA || '') + '\\Google\\Chrome\\Application\\chrome.exe',
+      ];
+      execPath = paths.find(p => fs.existsSync(p));
+    } else {
+      execPath = '/usr/bin/chromium-found';
+    }
+  }
+
+  return puppeteer.launch({
     headless: true,
     args: [
       '--no-sandbox',
@@ -14,8 +29,9 @@ const launchBrowser = (extraArgs = []) =>
       '--font-render-hinting=none',
       ...extraArgs,
     ],
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
+    executablePath: execPath,
   });
+};
 
 const setupPage = async (browser, { width = 1600, height = 1200 } = {}) => {
   const page = await browser.newPage();
