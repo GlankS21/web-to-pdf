@@ -1,4 +1,4 @@
-import puppeteer from 'puppeteer';
+import puppeteer from 'puppeteer-core';
 
 const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -14,7 +14,7 @@ const launchBrowser = (extraArgs = []) =>
       '--font-render-hinting=none',
       ...extraArgs,
     ],
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium',
   });
 
 const setupPage = async (browser, { width = 1600, height = 1200 } = {}) => {

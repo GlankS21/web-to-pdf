@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
-    "build": "npx puppeteer browsers install chrome"
+    "build": "echo using system chromium"
   },
   "engines": {
     "node": "20.x"
@@ -27,6 +27,7 @@
     "mongoose": "^9.1.6",
     "pdf-lib": "^1.17.1",
     "puppeteer": "^24.37.2",
+    "puppeteer-core": "^24.39.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
     "swagger-jsdoc": "^6.2.8",
