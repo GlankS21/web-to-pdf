@@ -11,21 +11,25 @@ export const previewWebsite = async (req, res) => {
   const { url, mobile } = req.body;
   if (!url) return res.status(400).json({ error: 'URL is required' });
 
-  // SSE streaming
+  // SSE streaming — disable proxy buffering
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
 
   const send = (type, payload) => {
     res.write(`data: ${JSON.stringify({ type, ...payload })}\n\n`);
+    if (typeof res.flush === 'function') res.flush();
   };
   const log = (msg) => { console.log(msg); send('log', { message: msg }); };
 
   try {
     log(`[preview] ${url}${mobile ? ' (mobile)' : ''}`);
+    log('[preview] launching browser...');
 
     const html = await withBrowser(async (_browser, page) => {
+      log('[preview] browser launched, loading page...');
       if (mobile) await page.setUserAgent(MOBILE_UA);
 
       await gotoPage(page, url, { log });
