@@ -6,7 +6,14 @@ const DEFAULT_USER_AGENT =
 const launchBrowser = (extraArgs = []) =>
   puppeteer.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', ...extraArgs],
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--font-render-hinting=none',
+      ...extraArgs,
+    ],
     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
   });
 
