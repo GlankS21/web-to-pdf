@@ -5,7 +5,7 @@ const api = axios.create({
   baseURL:
     import.meta.env.MODE === "development"
       ? "http://localhost:5001/api"
-      : "https://web-to-pdf-v6o5.onrender.com/api",
+      : "https://web-to-pdf-1.onrender.com/api",
   withCredentials: true,
 });
 

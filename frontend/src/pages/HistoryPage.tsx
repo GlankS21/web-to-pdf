@@ -4,7 +4,7 @@ import { useAuthStore } from '../stores/useAuthStore'
 import api from '../lib/axios'
 import UserMenu from '../components/UserMenu'
 
-const API = import.meta.env.MODE === 'development' ? 'http://localhost:5001/api' : 'https://web-to-pdf-v6o5.onrender.com/api'
+const API = import.meta.env.MODE === 'development' ? 'http://localhost:5001/api' : 'https://web-to-pdf-1.onrender.com/api'
 
 interface HistoryItem {
   _id: string
